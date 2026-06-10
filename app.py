@@ -892,7 +892,7 @@ st.set_page_config(
 # YAML MODEL LOADER - Load semantic model for routing and Cortex
 # ════════════════════════════════════════════════════════════════════════════
 
-def load_yaml_model(yaml_path="genie_Training.yml"):
+def load_yaml_model(yaml_path="app_settings.yaml"):
     """
     Load semantic model for Cortex/Genie.
     - Locally/Fabric: tries multiple file paths
@@ -907,7 +907,7 @@ def load_yaml_model(yaml_path="genie_Training.yml"):
         "dealer_model_simplified_06_03_2026.yml",
         "dealer_model.yml",
         "semantic_model.yml",
-        "genie_Training.yml",
+        "app_settings.yaml",
     ]
     
     for path in local_paths:
@@ -983,7 +983,7 @@ def _create_fallback_yaml_model() -> Dict:
 
 # Configuration for YAML update engine
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))  # Get directory where dealerapp.py is
-_YAML_FILENAME = "genie_Training.yml"
+_YAML_FILENAME = "app_settings.yaml"
 _YAML_LOCAL_PATH = os.path.join(_SCRIPT_DIR, _YAML_FILENAME)  # Absolute path to YAML file
 
 _SEMANTIC_CONFIG = {
@@ -3484,7 +3484,7 @@ def get_snowflake_connection():
 @st.cache_data(ttl=7200)  # Cache for 2 hours instead of 1 for better performance
 def load_semantic_model():
     """Load the semantic model from the local Fabric training file."""
-    return load_yaml_model("genie_Training.yml")
+    return load_yaml_model("app_settings.yaml")
 
 
 _local_semantic_cache = None
@@ -3494,7 +3494,7 @@ def _load_local_semantic_model():
     if _local_semantic_cache is not None:
         return _local_semantic_cache
     try:
-        _local_semantic_cache = load_yaml_model("genie_Training.yml")
+        _local_semantic_cache = load_yaml_model("app_settings.yaml")
         return _local_semantic_cache
     except Exception:
         st.error("Failed to load local semantic model.")
@@ -7307,7 +7307,7 @@ def route_verified_query_smart(question: str, model: dict, session=None):
             return ""
         try:
             yaml_content = ""
-            model_temp = load_yaml_model("genie_Training.yml")
+            model_temp = load_yaml_model("app_settings.yaml")
             if model_temp:
                 yaml_content = yaml.dump(model_temp, default_flow_style=False)
             
@@ -7927,7 +7927,7 @@ def run_quick_analysis(analysis_key: str):
     }
 
     # Load semantic model from stage or local file
-    model = load_yaml_model("genie_Training.yml")
+    model = load_yaml_model("app_settings.yaml")
     
     if not model or "verified_queries" not in model:
         return {"layout": "cortex", "error": "Could not load semantic model or no verified_queries found in YAML"}
@@ -8535,7 +8535,7 @@ def call_cortex_analyst(
     print(f"[TIMING] Starting Cortex SQL gen...")
     yaml_content = ""
     try:
-        model_temp = load_yaml_model("genie_Training.yml")
+        model_temp = load_yaml_model("app_settings.yaml")
         if model_temp:
             yaml_content = yaml.dump(model_temp, default_flow_style=False)
     except Exception as e:
