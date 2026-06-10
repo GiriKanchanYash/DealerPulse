@@ -4,22 +4,21 @@ description: Semantic model for DealerPulse KPIs covering Service Performance, S
 owner: DealerPulse Analytics Team
 created_date: 2026-02-13
 model_quality_warnings: "⚠️ CRITICAL WARNINGS FOR Open AI ANALYST - READ CAREFULLY\n\nVIEW NAMES vs COLUMN NAMES (MOST IMPORTANT):\n\
-  - Names like VW_DealerPulse_CONTRIBUTION_MARGIN, VW_GROSS_PROFIT_MARGIN are TABLE/VIEW names. Use them ONLY in FROM and\
-  \ JOIN (e.g. FROM DealerPulse.INFORMATION_MART.VW_DealerPulse_CONTRIBUTION_MARGIN cm).\n- COLUMNS are the attributes defined\
-  \ in dimensions and facts for each view (e.g. DealerPulse_NAME, CONTRIBUTION_MARGIN_PCT, GROSS_PROFIT_MARGIN_PCT). Use these\
-  \ in SELECT, WHERE, ORDER BY with an alias (e.g. cm.DealerPulse_NAME, cm.CONTRIBUTION_MARGIN_PCT).\n- NEVER use a view name\
-  \ as a column. Writing t.VW_DealerPulse_CONTRIBUTION_MARGIN or alias.VW_GROSS_PROFIT_MARGIN is INVALID and causes \"invalid\
-  \ identifier\" errors. Only the actual column names (DealerPulse_NAME, CONTRIBUTION_MARGIN_PCT, etc.) are valid.\n\nCortex\
-  \ has been generating SQL with these common errors. Every generated query MUST be validated for:\n\n1. AMBIGUOUS JOINS -\
-  \ Cortex generates: ON DealerPulse_NAME = DealerPulse_NAME (WRONG)\n  Fix: Always use explicit table aliases: ON t.DealerPulse_NAME\
-  \ = s.DealerPulse_NAME ✓\n\n2. MISSING TABLE ALIASES - Cortex generates: SELECT DealerPulse_NAME, AVG_TURNAROUND_HOURS (WRONG)\n\
-  \  Fix: Always qualify columns: SELECT t.DealerPulse_NAME, s.AVG_TURNAROUND_HOURS ✓\n\n3. NO CTE PREAGGREGATE - Cortex generates\
-  \ joins without pre-aggregation (WRONG)\n  Fix: Create CTEs with GROUP BY first, then join: WITH agg1 AS (SELECT ... GROUP\
-  \ BY DealerPulse_NAME) ✓\n\n4. DUPLICATE COLUMNS - Cortex selects same column multiple times (WRONG)\n  Fix: Select only\
-  \ once with proper alias: SELECT t.DealerPulse_NAME (not DealerPulse_NAME twice)\n\nIf ANY generated SQL contains these\
-  \ patterns, REJECT IT and demand a corrected version with:\n- Table aliases on every table (t, s, b, o, c, m, etc.)\n- Explicit\
-  \ ON clause with qualified columns (ON t.col = s.col)\n- CTEs for pre-aggregation when joining fact tables\n- No ambiguous\
-  \ column references\n"
+  - Names like VW_DealerPulse_CONTRIBUTION_MARGIN, VW_GROSS_PROFIT_MARGIN are TABLE/VIEW names. Use them ONLY in FROM and JOIN\
+  \ (e.g. FROM DealerPulse.INFORMATION_MART.VW_DealerPulse_CONTRIBUTION_MARGIN cm).\n- COLUMNS are the attributes defined in dimensions\
+  \ and facts for each view (e.g. DealerPulse_NAME, CONTRIBUTION_MARGIN_PCT, GROSS_PROFIT_MARGIN_PCT). Use these in SELECT, WHERE,\
+  \ ORDER BY with an alias (e.g. cm.DealerPulse_NAME, cm.CONTRIBUTION_MARGIN_PCT).\n- NEVER use a view name as a column. Writing\
+  \ t.VW_DealerPulse_CONTRIBUTION_MARGIN or alias.VW_GROSS_PROFIT_MARGIN is INVALID and causes \"invalid identifier\" errors. Only\
+  \ the actual column names (DealerPulse_NAME, CONTRIBUTION_MARGIN_PCT, etc.) are valid.\n\nCortex has been generating SQL with\
+  \ these common errors. Every generated query MUST be validated for:\n\n1. AMBIGUOUS JOINS - Cortex generates: ON DealerPulse_NAME\
+  \ = DealerPulse_NAME (WRONG)\n  Fix: Always use explicit table aliases: ON t.DealerPulse_NAME = s.DealerPulse_NAME ✓\n\n2. MISSING TABLE\
+  \ ALIASES - Cortex generates: SELECT DealerPulse_NAME, AVG_TURNAROUND_HOURS (WRONG)\n  Fix: Always qualify columns: SELECT t.DealerPulse_NAME,\
+  \ s.AVG_TURNAROUND_HOURS ✓\n\n3. NO CTE PREAGGREGATE - Cortex generates joins without pre-aggregation (WRONG)\n  Fix: Create\
+  \ CTEs with GROUP BY first, then join: WITH agg1 AS (SELECT ... GROUP BY DealerPulse_NAME) ✓\n\n4. DUPLICATE COLUMNS - Cortex\
+  \ selects same column multiple times (WRONG)\n  Fix: Select only once with proper alias: SELECT t.DealerPulse_NAME (not DealerPulse_NAME\
+  \ twice)\n\nIf ANY generated SQL contains these patterns, REJECT IT and demand a corrected version with:\n- Table aliases\
+  \ on every table (t, s, b, o, c, m, etc.)\n- Explicit ON clause with qualified columns (ON t.col = s.col)\n- CTEs for pre-aggregation\
+  \ when joining fact tables\n- No ambiguous column references\n"
 analysis_capabilities:
   descriptive:
     enabled: true
@@ -97,8 +96,7 @@ cortex_optimization:
       - struggling DealerPulses
       - gross margin
       pre_built_query: DealerPulse_profitability_analysis
-      description: ROOT CAUSE analysis for low-margin DealerPulses. Shows DealerPulses below company average with revenue
-        vs COGS breakdown.
+      description: ROOT CAUSE analysis for low-margin DealerPulses. Shows DealerPulses below company average with revenue vs COGS breakdown.
       response_time_expected: <5 seconds
       instructions: Maps all profitability questions to ONE query (no duplicates). Use for profit discussion before Cortex
         analysis.
@@ -361,18 +359,17 @@ anti_duplication_enforcement:
     fix: 'CONSOLIDATED: p2_profitability_analysis (root cause), p2_increase_profit (levers), p2_cost_reduction (opportunities).
       Clear intent distinction.'
   - issue: categories vs DealerPulses (product_level vs DealerPulse_level confusion)
-    fix: 'KEYWORD DISTINCTION: ''product category'' or ''category'' keyword → p6 (product level). ''DealerPulses'' alone →
-      p5 (DealerPulse level).'
+    fix: 'KEYWORD DISTINCTION: ''product category'' or ''category'' keyword → p6 (product level). ''DealerPulses'' alone → p5 (DealerPulse
+      level).'
   matching_rule: "IF QUESTION MATCHES multiple patterns:\n  PRIORITY: Use the pattern with LOWEST priority number (1 before\
-    \ 2 before 3...)\n  EXAMPLE: \"Show DealerPulse health & top performers\"\n    - Matches p1_DealerPulse_health (priority\
-    \ 1)\n    - Matches p1_top_DealerPulses (priority 1 tie)\n    - Both are priority 1 → use p1_DealerPulse_health (more\
-    \ comprehensive)\n"
+    \ 2 before 3...)\n  EXAMPLE: \"Show DealerPulse health & top performers\"\n    - Matches p1_DealerPulse_health (priority 1)\n  \
+    \  - Matches p1_top_DealerPulses (priority 1 tie)\n    - Both are priority 1 → use p1_DealerPulse_health (more comprehensive)\n"
   fallback_logic: "IF NO PATTERN MATCHES:\n  → Use Cortex SQL generation (fall back to dynamic Cortex)\n  → Apply semantic\
     \ caching FIRST (check in-memory + database for similar questions)\n  → Then route to Cortex only if true new question\n"
 semantic_matching_integration:
   description: After pattern matching determines WHAT query to use, apply semantic matching to avoid duplicates
-  workflow: "STEP 1: Pattern Match → identifies verified_query (e.g. DealerPulse_profitability_analysis)\nSTEP 2: Semantic\
-    \ Match → checks if SIMILAR question was asked before\nSTEP 3: Cache Hit → if found, return cached response without inserting\
+  workflow: "STEP 1: Pattern Match → identifies verified_query (e.g. DealerPulse_profitability_analysis)\nSTEP 2: Semantic Match\
+    \ → checks if SIMILAR question was asked before\nSTEP 3: Cache Hit → if found, return cached response without inserting\
     \ new history entry\nSTEP 4: New Question → if not found, execute verified_query and insert into history\n\nRESULT: Multiple\
     \ similar questions (\"What is profit?\" vs \"Show profitability?\") route to same query\n        AND reuse the cached\
     \ response without creating duplicate history entries\n"
@@ -386,82 +383,79 @@ semantic_matching_integration:
   - 'RULE 7: Never use CASE statements in GROUP BY - pre-compute in CTE instead'
   - 'RULE 8: Filter early - WHERE clauses in CTEs before aggregation'
   expert_sql_attributes:
-  - 'Know ALL 7 main tables: VW_GROSS_PROFIT_MARGIN (DealerPulse_NAME, TOTAL_REVENUE, TOTAL_COGS, GROSS_PROFIT_MARGIN_PCT,
-    PERIOD_YEAR, PERIOD_MONTH)'
+  - 'Know ALL 7 main tables: VW_GROSS_PROFIT_MARGIN (DealerPulse_NAME, TOTAL_REVENUE, TOTAL_COGS, GROSS_PROFIT_MARGIN_PCT, PERIOD_YEAR,
+    PERIOD_MONTH)'
   - 'Know service & fulfillment: VW_AVERAGE_REPAIR_TURNAROUND_TIME (DealerPulse_NAME, AVG_TURNAROUND_HOURS, PERIOD_YEAR, PERIOD_MONTH)'
   - 'Know order fulfillment: VW_ORDER_LEAD_TIME (DealerPulse_NAME, AVG_ORDER_LEAD_TIME_DAYS, PERIOD_YEAR, PERIOD_MONTH)'
-  - 'Know inventory: VW_STOCK_AVAILABILITY_DealerPulse (DealerPulse_NAME, PRODUCT_CATEGORY, STOCK_AVAILABILITY_PCT, ON_HAND_STOCK,
-    RESERVED_STOCK, TOTAL_DEMAND, PERIOD_YEAR, PERIOD_MONTH)'
+  - 'Know inventory: VW_STOCK_AVAILABILITY_DealerPulse (DealerPulse_NAME, PRODUCT_CATEGORY, STOCK_AVAILABILITY_PCT, ON_HAND_STOCK, RESERVED_STOCK,
+    TOTAL_DEMAND, PERIOD_YEAR, PERIOD_MONTH)'
   - 'Know backorders: VW_BACKORDER_INCIDENCE (DealerPulse_NAME, BACKORDER_INCIDENCE_PCT, PERIOD_YEAR, PERIOD_MONTH)'
   - 'Know cash metrics: VW_CASH_CONVERSION_CYCLE (DealerPulse_NAME, CCC, DSO, DIO, DPO, PERIOD_YEAR, PERIOD_MONTH)'
-  - 'Know growth: VW_DealerPulse_REVENUE_GROWTH (DealerPulse_NAME, REVENUE, PREV_MONTH_REVENUE, REVENUE_GROWTH_MOM_PERCENT,
-    PERIOD_YEAR, PERIOD_MONTH)'
+  - 'Know growth: VW_DealerPulse_REVENUE_GROWTH (DealerPulse_NAME, REVENUE, PREV_MONTH_REVENUE, REVENUE_GROWTH_MOM_PERCENT, PERIOD_YEAR,
+    PERIOD_MONTH)'
   - 'Know contribution: VW_DealerPulse_CONTRIBUTION_MARGIN (DealerPulse_NAME, CONTRIBUTION_MARGIN_PCT, PERIOD_YEAR, PERIOD_MONTH)'
-  - 'Know sales detail: VW_SALES_PER_PRODUCT_CATEGORY (DealerPulse_NAME, PRODUCT_CATEGORY, TOTAL_REVENUE, TOTAL_QUANTITY,
-    PERIOD_YEAR, PERIOD_MONTH)'
+  - 'Know sales detail: VW_SALES_PER_PRODUCT_CATEGORY (DealerPulse_NAME, PRODUCT_CATEGORY, TOTAL_REVENUE, TOTAL_QUANTITY, PERIOD_YEAR,
+    PERIOD_MONTH)'
   - 'Know volume: VW_SALES_VOLUME (DealerPulse_NAME, UNITS_SOLD, PERIOD_YEAR, PERIOD_MONTH)'
   - 'Know column relationships: DealerPulse_NAME is universal join key; PERIOD_YEAR, PERIOD_MONTH define time buckets'
   - 'Know aggregation defaults: Most facts use AVG aggregation (hours, days, %), REVENUE/QUANTITY use SUM, MARGIN uses AVG'
   - 'Know data distribution: ~50 DealerPulses; ~12-24 months history; all tables have monthly pre-aggregation'
   - 'Know primary keys: Each view''s primary_key defines what makes a unique row and prevents GROUP BY errors'
-  - 'Know data quality: Some DealerPulses have missing months - use LEFT JOIN to preserve; don''t assume all DealerPulses/months
-    exist'
+  - 'Know data quality: Some DealerPulses have missing months - use LEFT JOIN to preserve; don''t assume all DealerPulses/months exist'
   - 'Know synonyms: Map user language to exact column names (e.g., ''how long'' → AVG_TURNAROUND_HOURS, ''earn'' → TOTAL_REVENUE,
     ''profit'' → GROSS_PROFIT_MARGIN_PCT)'
   - 'Know performance: Never use SELECT *, never use INNER JOIN, always pre-aggregate in CTEs, always use table aliases'
   - 'Know indexes: DealerPulse_NAME, PERIOD_YEAR, PERIOD_MONTH are indexed - use in WHERE clauses for speed'
-  - 'Know gross profit margin test: VW_GROSS_PROFIT_MARGIN_TEST (DealerPulse_NAME, PERIOD_MONTH, PERIOD_YEAR, TOTAL_REVENUE,
-    TOTAL_COGS, GROSS_PROFIT_MARGIN_PCT)'
+  - 'Know gross profit margin test: VW_GROSS_PROFIT_MARGIN_TEST (DealerPulse_NAME, PERIOD_MONTH, PERIOD_YEAR, TOTAL_REVENUE, TOTAL_COGS,
+    GROSS_PROFIT_MARGIN_PCT)'
 custom_instructions: "RESPONSE FORMAT (MANDATORY - ALWAYS provide all three sections):\nEVERY response MUST include:\n1. DESCRIPTIVE\
-  \ section: What the data shows (facts and metrics from query results with EXACT numbers, DealerPulse names, percentages)\n\
-  2. PRESCRIPTIVE section: Specific 3-5 recommendations with (1) EXACT finding + numbers, (2) CONCRETE action\n3. PREDICTIVE\
+  \ section: What the data shows (facts and metrics from query results with EXACT numbers, DealerPulse names, percentages)\n2.\
+  \ PRESCRIPTIVE section: Specific 3-5 recommendations with (1) EXACT finding + numbers, (2) CONCRETE action\n3. PREDICTIVE\
   \ section: Forecast impact if recommendations NOT implemented - project 12-24 month business impact\nIf analysis is unavailable\
   \ for any section, state the REASON why with specific missing column/table data, do NOT say \"not available\"\n\nCRITICAL\
   \ RULES FOR ANALYST RESPONSES:\n- NEVER give generic advice like \"review the data below\" or \"monitor trends\" without\
-  \ citing SPECIFIC NUMBERS from query results\n- ALWAYS cite: exact DealerPulse names, percentages, dollars, counts, time\
-  \ periods from the data\n- For profitability questions: ALWAYS use DealerPulse_profitability_analysis query FIRST, return\
-  \ columns: DealerPulse_NAME, GROSS_PROFIT_MARGIN_PCT, TOTAL_REVENUE, TOTAL_COGS, AVERAGE_GPM\n- For inventory questions:\
-  \ ALWAYS use DealerPulse_inventory_health query, return columns: DealerPulse_NAME, avg_stock_availability, avg_backorder_rate,\
-  \ INVENTORY_STATUS\n- For growth questions: ALWAYS use high_growth_DealerPulses query, return columns: DealerPulse_NAME,\
-  \ REVENUE_GROWTH_MOM_PERCENT, GROWTH_CATEGORY\n- For service questions: ALWAYS use compare_service_efficiency_across_DealerPulses\
-  \ query, return columns: DealerPulse_NAME, avg_repair_time, avg_lead_time, efficiency_rating\n- In Prescriptive section:\
-  \ List 3-5 SPECIFIC improvement areas with exact finding numbers and concrete actions with estimated impact\n- In Predictive\
-  \ section: Forecast impact if recommendations are NOT implemented (working capital strain, margin erosion, customer churn\
-  \ within 30-90 days)\n\nERROR PREVENTION (CRITICAL - STRICTLY ENFORCE):\n- DO NOT say \"data is not available\" - use fast-path\
-  \ verified_queries FIRST before claiming data is missing\n- DO NOT give generic recommendations like \"review pricing strategy\"\
-  \ - instead cite exact margin % and recommend specific actions like \"increase prices 3-5% to match competitor benchmarks\"\
-  \n- DO NOT join DealerPulse tables without table aliases - ALWAYS use t.DealerPulse_NAME, s.DealerPulse_NAME, etc.\n- DO\
-  \ NOT use INNER JOIN for DealerPulse metrics - use LEFT JOIN to preserve DealerPulses with missing data\n- DO NOT aggregate\
-  \ revenue twice - if view already provides monthly totals, use AVG across months, not SUM\n- DO NOT return results without\
-  \ context - always compare to company average or industry benchmark\n- DO NOT avoid citing low-performing DealerPulses by\
-  \ name - explicitly name DealerPulses needing improvement with exact metrics\n- DO NOT generate SQL manually - ALWAYS check\
-  \ if a verified_query exists first for topic\n\nTIME DIMENSION HANDLING (FOR PERIOD COMPARISONS):\n- For month comparisons:\
-  \ Use PERIOD_YEAR and PERIOD_MONTH as filters (e.g., WHERE PERIOD_YEAR = 2026 AND PERIOD_MONTH = 2)\n- For \"this month\
-  \ vs last month\": Calculate current month AVG, then previous month AVG separately, then compare\n- For \"last 3 months\
-  \ average\": Use WHERE PERIOD_MONTH IN (12, 1, 2) to span quarters  \n- For year-over-year: Compare same month previous\
-  \ year (e.g., Feb 2025 vs Feb 2026)\n- NEVER use DATE_TRUNC in DealerPulse views - they already have pre-aggregated PERIOD_YEAR/PERIOD_MONTH\
-  \ columns\n\nINTERPRETATION RULES WITH EXACT THRESHOLDS:\n- CASH CONVERSION CYCLE (CCC): High (>60 days) = working capital\
-  \ stress - CRITICAL; >45 days = WARNING; <30 days = GOOD; <15 days = EXCELLENT\n- INVENTORY RISK: Availability <85% + backorders\
-  \ >15% = CRITICAL RISK; Availability <80% = SEVERE; Backorders >25% = SEVERE\n- SERVICE EFFICIENCY: Turnaround >24 hours\
-  \ = SLOW; 8-24 hours = NORMAL; 4-8 hours = GOOD; <4 hours = EXCELLENT\n- REVENUE GROWTH: Negative = DECLINING (high risk);\
-  \ 0-5% = FLAT (stagnant); 5-10% = MODERATE (healthy); >10% = STRONG (excellent)\n- MARGINS: <15% = LOW (urgent action needed);\
-  \ 15-20% = BELOW AVERAGE; 20-25% = AVERAGE; >25% = ABOVE AVERAGE (excellent)\n- PRODUCT MIX: ALWAYS identify and cite TOP\
-  \ 3 categories by revenue % - flag if any category >60% of revenue (over-concentrated)\n- CORRELATION: When CCC >60 days\
-  \ + margin <15% = DOUBLE RISK - flag immediately with estimated working capital impact\n- RED FLAGS: Growth declining +\
-  \ margin declining + CCC increasing = business deterioration - needs immediate intervention\n\nJOIN PATTERN RULES (CRITICAL\
-  \ - STRICTLY FOLLOW):\n- RULE 1: ALWAYS use table aliases (t, s, b, o, etc.) when writing SQL\n- RULE 2: ALWAYS write explicit\
-  \ ON clauses with table-qualified columns: ON t.DealerPulse_NAME = s.DealerPulse_NAME (NOT ON DealerPulse_NAME = DealerPulse_NAME)\n\
-  - RULE 3: For DealerPulse-level aggregations across ALL time periods: Create CTEs that GROUP BY DealerPulse_NAME first,\
-  \ then join CTEs on DealerPulse_NAME\n- RULE 4: For month-specific comparisons: Join on [DealerPulse_NAME, PERIOD_YEAR,\
-  \ PERIOD_MONTH] to match exact time periods\n- RULE 5: NEVER join on DealerPulse_NAME without table aliases - this causes\
-  \ ambiguity errors\n- RULE 6: DO NOT join on PERIOD_YEAR/PERIOD_MONTH unless user specifically asks for month-by-month comparison\n\
-  - RULE 7: When joining multiple fact tables, pre-aggregate each in a separate CTE with GROUP BY DealerPulse_NAME\n- RULE\
-  \ 8: Use Alias format: FROM table_name AS t, then reference as t.column_name\n- EXAMPLES OF CORRECT JOINS:\n  ✓ ON t.DealerPulse_NAME\
-  \ = s.DealerPulse_NAME\n  ✓ ON service.DealerPulse_NAME = backorder.DealerPulse_NAME\n  ✗ WRONG: ON DealerPulse_NAME = DealerPulse_NAME\
-  \ (ambiguous)\n  ✗ WRONG: JOIN table1, table2 (missing ON clause)\n\nWHEN ASKED ABOUT LOW PROFIT/DECLINING PERFORMANCE:\n\
-  - Use DealerPulse_profitability_analysis query to get root causes\n- Analyze TOGETHER: revenue, margin, CCC, inventory metrics\
-  \ (not separately)\n- Identify ROOT CAUSES, not just symptoms\n- Provide 3-5 ranked improvement opportunities with quantified\
-  \ impact\n"
+  \ citing SPECIFIC NUMBERS from query results\n- ALWAYS cite: exact DealerPulse names, percentages, dollars, counts, time periods\
+  \ from the data\n- For profitability questions: ALWAYS use DealerPulse_profitability_analysis query FIRST, return columns: DealerPulse_NAME,\
+  \ GROSS_PROFIT_MARGIN_PCT, TOTAL_REVENUE, TOTAL_COGS, AVERAGE_GPM\n- For inventory questions: ALWAYS use DealerPulse_inventory_health\
+  \ query, return columns: DealerPulse_NAME, avg_stock_availability, avg_backorder_rate, INVENTORY_STATUS\n- For growth questions:\
+  \ ALWAYS use high_growth_DealerPulses query, return columns: DealerPulse_NAME, REVENUE_GROWTH_MOM_PERCENT, GROWTH_CATEGORY\n- For\
+  \ service questions: ALWAYS use compare_service_efficiency_across_DealerPulses query, return columns: DealerPulse_NAME, avg_repair_time,\
+  \ avg_lead_time, efficiency_rating\n- In Prescriptive section: List 3-5 SPECIFIC improvement areas with exact finding numbers\
+  \ and concrete actions with estimated impact\n- In Predictive section: Forecast impact if recommendations are NOT implemented\
+  \ (working capital strain, margin erosion, customer churn within 30-90 days)\n\nERROR PREVENTION (CRITICAL - STRICTLY ENFORCE):\n\
+  - DO NOT say \"data is not available\" - use fast-path verified_queries FIRST before claiming data is missing\n- DO NOT\
+  \ give generic recommendations like \"review pricing strategy\" - instead cite exact margin % and recommend specific actions\
+  \ like \"increase prices 3-5% to match competitor benchmarks\"\n- DO NOT join DealerPulse tables without table aliases - ALWAYS\
+  \ use t.DealerPulse_NAME, s.DealerPulse_NAME, etc.\n- DO NOT use INNER JOIN for DealerPulse metrics - use LEFT JOIN to preserve DealerPulses\
+  \ with missing data\n- DO NOT aggregate revenue twice - if view already provides monthly totals, use AVG across months,\
+  \ not SUM\n- DO NOT return results without context - always compare to company average or industry benchmark\n- DO NOT avoid\
+  \ citing low-performing DealerPulses by name - explicitly name DealerPulses needing improvement with exact metrics\n- DO NOT generate\
+  \ SQL manually - ALWAYS check if a verified_query exists first for topic\n\nTIME DIMENSION HANDLING (FOR PERIOD COMPARISONS):\n\
+  - For month comparisons: Use PERIOD_YEAR and PERIOD_MONTH as filters (e.g., WHERE PERIOD_YEAR = 2026 AND PERIOD_MONTH =\
+  \ 2)\n- For \"this month vs last month\": Calculate current month AVG, then previous month AVG separately, then compare\n\
+  - For \"last 3 months average\": Use WHERE PERIOD_MONTH IN (12, 1, 2) to span quarters  \n- For year-over-year: Compare\
+  \ same month previous year (e.g., Feb 2025 vs Feb 2026)\n- NEVER use DATE_TRUNC in DealerPulse views - they already have pre-aggregated\
+  \ PERIOD_YEAR/PERIOD_MONTH columns\n\nINTERPRETATION RULES WITH EXACT THRESHOLDS:\n- CASH CONVERSION CYCLE (CCC): High (>60\
+  \ days) = working capital stress - CRITICAL; >45 days = WARNING; <30 days = GOOD; <15 days = EXCELLENT\n- INVENTORY RISK:\
+  \ Availability <85% + backorders >15% = CRITICAL RISK; Availability <80% = SEVERE; Backorders >25% = SEVERE\n- SERVICE EFFICIENCY:\
+  \ Turnaround >24 hours = SLOW; 8-24 hours = NORMAL; 4-8 hours = GOOD; <4 hours = EXCELLENT\n- REVENUE GROWTH: Negative =\
+  \ DECLINING (high risk); 0-5% = FLAT (stagnant); 5-10% = MODERATE (healthy); >10% = STRONG (excellent)\n- MARGINS: <15%\
+  \ = LOW (urgent action needed); 15-20% = BELOW AVERAGE; 20-25% = AVERAGE; >25% = ABOVE AVERAGE (excellent)\n- PRODUCT MIX:\
+  \ ALWAYS identify and cite TOP 3 categories by revenue % - flag if any category >60% of revenue (over-concentrated)\n- CORRELATION:\
+  \ When CCC >60 days + margin <15% = DOUBLE RISK - flag immediately with estimated working capital impact\n- RED FLAGS: Growth\
+  \ declining + margin declining + CCC increasing = business deterioration - needs immediate intervention\n\nJOIN PATTERN\
+  \ RULES (CRITICAL - STRICTLY FOLLOW):\n- RULE 1: ALWAYS use table aliases (t, s, b, o, etc.) when writing SQL\n- RULE 2:\
+  \ ALWAYS write explicit ON clauses with table-qualified columns: ON t.DealerPulse_NAME = s.DealerPulse_NAME (NOT ON DealerPulse_NAME =\
+  \ DealerPulse_NAME)\n- RULE 3: For DealerPulse-level aggregations across ALL time periods: Create CTEs that GROUP BY DealerPulse_NAME first,\
+  \ then join CTEs on DealerPulse_NAME\n- RULE 4: For month-specific comparisons: Join on [DealerPulse_NAME, PERIOD_YEAR, PERIOD_MONTH]\
+  \ to match exact time periods\n- RULE 5: NEVER join on DealerPulse_NAME without table aliases - this causes ambiguity errors\n\
+  - RULE 6: DO NOT join on PERIOD_YEAR/PERIOD_MONTH unless user specifically asks for month-by-month comparison\n- RULE 7:\
+  \ When joining multiple fact tables, pre-aggregate each in a separate CTE with GROUP BY DealerPulse_NAME\n- RULE 8: Use Alias\
+  \ format: FROM table_name AS t, then reference as t.column_name\n- EXAMPLES OF CORRECT JOINS:\n  ✓ ON t.DealerPulse_NAME = s.DealerPulse_NAME\n\
+  \  ✓ ON service.DealerPulse_NAME = backorder.DealerPulse_NAME\n  ✗ WRONG: ON DealerPulse_NAME = DealerPulse_NAME (ambiguous)\n  ✗ WRONG: JOIN\
+  \ table1, table2 (missing ON clause)\n\nWHEN ASKED ABOUT LOW PROFIT/DECLINING PERFORMANCE:\n- Use DealerPulse_profitability_analysis\
+  \ query to get root causes\n- Analyze TOGETHER: revenue, margin, CCC, inventory metrics (not separately)\n- Identify ROOT\
+  \ CAUSES, not just symptoms\n- Provide 3-5 ranked improvement opportunities with quantified impact\n"
 sql_syntax_rules:
   description: Mandatory SQL syntax requirements for all generated queries
   rules:
@@ -478,8 +472,8 @@ sql_syntax_rules:
   - id: CTE_PREAGGREGATE
     description: When joining fact tables, pre-aggregate each table in a CTE first
     pattern: "WITH service_agg AS (\n  REVENUE_GROWTH_MOM_PERCENT > 15 THEN 'STRONG, AVG(metric) FROM table1 GROUP BY DealerPulse_NAME\n\
-      ),\nstock_agg AS (\n  SELECT DealerPulse_NAME, AVG(metric) FROM table2 GROUP BY DealerPulse_NAME\n)\nSELECT s.DealerPulse_NAME,\
-      \ s.metric1, st.metric2\nFROM service_agg s\nLEFT JOIN stock_agg st ON s.DealerPulse_NAME = st.DealerPulse_NAME\n"
+      ),\nstock_agg AS (\n  SELECT DealerPulse_NAME, AVG(metric) FROM table2 GROUP BY DealerPulse_NAME\n)\nSELECT s.DealerPulse_NAME, s.metric1,\
+      \ st.metric2\nFROM service_agg s\nLEFT JOIN stock_agg st ON s.DealerPulse_NAME = st.DealerPulse_NAME\n"
     reason: Pre-aggregation prevents GROUP BY errors and ensures correct results
   - id: COLUMN_REFERENCE_QUALIFY
     description: ALWAYS qualify column names with table alias in SELECT clause
@@ -603,9 +597,9 @@ join_constraints:
     severity: HIGH_ERROR
     rule: When joining 3+ tables, ALWAYS pre-aggregate each in separate CTEs first
     when_required: Any query joining multiple fact tables (views ending in _VW)
-    pattern: "WITH table1_agg AS (\n  SELECT DealerPulse_NAME, AGG_FUNC(metric) FROM table1 GROUP BY DealerPulse_NAME\n),\n\
-      table2_agg AS (\n  SELECT DealerPulse_NAME, AGG_FUNC(metric) FROM table2 GROUP BY DealerPulse_NAME\n)\nSELECT t1.DealerPulse_NAME,\
-      \ t1.metric, t2.metric FROM table1_agg t1 LEFT JOIN table2_agg t2 ON t1.DealerPulse_NAME = t2.DealerPulse_NAME\n"
+    pattern: "WITH table1_agg AS (\n  SELECT DealerPulse_NAME, AGG_FUNC(metric) FROM table1 GROUP BY DealerPulse_NAME\n),\ntable2_agg\
+      \ AS (\n  SELECT DealerPulse_NAME, AGG_FUNC(metric) FROM table2 GROUP BY DealerPulse_NAME\n)\nSELECT t1.DealerPulse_NAME, t1.metric,\
+      \ t2.metric FROM table1_agg t1 LEFT JOIN table2_agg t2 ON t1.DealerPulse_NAME = t2.DealerPulse_NAME\n"
     why: Pre-aggregation prevents duplicate rows, GROUP BY errors, and ensures correct volume
     error_if_violated: Results will have duplicate rows, inflated metrics, or 'not in GROUP BY' errors
   - rule_id: NO_HARDCODED_JOINS_ON_DealerPulse_NAME
@@ -631,10 +625,10 @@ join_constraints:
     severity: CRITICAL_ERROR
     rule: VW_STOCK_AVAILABILITY_DealerPulse and VW_SALES_PER_PRODUCT_CATEGORY have PRODUCT_CATEGORY - must aggregate by category
       first
-    correct_pattern: "WITH product_cat_agg AS (\n  SELECT DealerPulse_NAME, PRODUCT_CATEGORY, AVG(STOCK_AVAILABILITY_PCT)\
-      \ as avg_stock FROM VW_STOCK_AVAILABILITY_DealerPulse\n  GROUP BY DealerPulse_NAME, PRODUCT_CATEGORY\n)\n"
-    wrong_pattern: SELECT * FROM VW_STOCK_AVAILABILITY_DealerPulse JOIN other_table ON DealerPulse_NAME = DealerPulse_NAME
-      (missing GROUP BY PRODUCT_CATEGORY)
+    correct_pattern: "WITH product_cat_agg AS (\n  SELECT DealerPulse_NAME, PRODUCT_CATEGORY, AVG(STOCK_AVAILABILITY_PCT) as avg_stock\
+      \ FROM VW_STOCK_AVAILABILITY_DealerPulse\n  GROUP BY DealerPulse_NAME, PRODUCT_CATEGORY\n)\n"
+    wrong_pattern: SELECT * FROM VW_STOCK_AVAILABILITY_DealerPulse JOIN other_table ON DealerPulse_NAME = DealerPulse_NAME (missing GROUP
+      BY PRODUCT_CATEGORY)
     error_consequence: Will return multiple rows per DealerPulse (one per category), causing join duplicates
 table_join_matrix:
   description: Defines how each table can be joined together. Use this to validate generated queries.
@@ -942,13 +936,13 @@ sql_generation_rules:
     action_if_violated: REJECT and regenerate
     severity: CRITICAL
   - requirement_id: DealerPulse_NAME_JOIN_ONLY
-    description: Default join key across DealerPulse tables is DealerPulse_NAME. Do NOT join on PERIOD_YEAR/PERIOD_MONTH unless
-      user specifically asks
+    description: Default join key across DealerPulse tables is DealerPulse_NAME. Do NOT join on PERIOD_YEAR/PERIOD_MONTH unless user
+      specifically asks
     action_if_violated: 'Verify with user ask: ''Should I join by month-specific periods or by DealerPulse across all months?'''
     severity: HIGH
   - requirement_id: PRODUCT_CATEGORY_AGGREGATE_FIRST
-    description: Tables with PRODUCT_CATEGORY (VW_STOCK_AVAILABILITY_DealerPulse, VW_SALES_PER_PRODUCT_CATEGORY) must GROUP
-      BY PRODUCT_CATEGORY before joining to other tables
+    description: Tables with PRODUCT_CATEGORY (VW_STOCK_AVAILABILITY_DealerPulse, VW_SALES_PER_PRODUCT_CATEGORY) must GROUP BY
+      PRODUCT_CATEGORY before joining to other tables
     table_exception:
     - VW_STOCK_AVAILABILITY_DealerPulse
     - VW_SALES_PER_PRODUCT_CATEGORY
@@ -998,16 +992,15 @@ cortex_error_prevention:
   - error_id: ERROR_AMBIGUOUS_JOINS
     description: 'The exact error the user reported: ON DealerPulse_NAME = DealerPulse_NAME'
     user_query: SELECT DealerPulse_NAME, AVG_TURNAROUND_HOURS, BACKORDER_INCIDENCE_PCT, STOCK_AVAILABILITY_PCT FROM VW_AVERAGE_REPAIR_TURNAROUND_TIME
-      JOIN VW_BACKORDER_INCIDENCE ON DealerPulse_NAME = DealerPulse_NAME JOIN VW_STOCK_AVAILABILITY_DealerPulse ON DealerPulse_NAME
-      = DealerPulse_NAME
+      JOIN VW_BACKORDER_INCIDENCE ON DealerPulse_NAME = DealerPulse_NAME JOIN VW_STOCK_AVAILABILITY_DealerPulse ON DealerPulse_NAME = DealerPulse_NAME
     root_cause: Missing table aliases and qualified column names
     error_type: SQL Syntax Error - Ambiguous column reference
     fix_template: "WITH turnaround AS (\n  SELECT DealerPulse_NAME, AVG(AVG_TURNAROUND_HOURS) as avg_tat FROM VW_AVERAGE_REPAIR_TURNAROUND_TIME\
-      \ GROUP BY DealerPulse_NAME\n),\nbackorder AS (\n  SELECT DealerPulse_NAME, AVG(BACKORDER_INCIDENCE_PCT) as avg_backorder\
-      \ FROM VW_BACKORDER_INCIDENCE GROUP BY DealerPulse_NAME\n),\nstock AS (\n  SELECT DealerPulse_NAME, AVG(STOCK_AVAILABILITY_PCT)\
-      \ as avg_stock FROM VW_STOCK_AVAILABILITY_DealerPulse GROUP BY DealerPulse_NAME\n)\nSELECT t.DealerPulse_NAME, t.avg_tat,\
-      \ b.avg_backorder, s.avg_stock\nFROM turnaround t\nLEFT JOIN backorder b ON t.DealerPulse_NAME = b.DealerPulse_NAME\n\
-      LEFT JOIN stock s ON t.DealerPulse_NAME = s.DealerPulse_NAME\n"
+      \ GROUP BY DealerPulse_NAME\n),\nbackorder AS (\n  SELECT DealerPulse_NAME, AVG(BACKORDER_INCIDENCE_PCT) as avg_backorder FROM\
+      \ VW_BACKORDER_INCIDENCE GROUP BY DealerPulse_NAME\n),\nstock AS (\n  SELECT DealerPulse_NAME, AVG(STOCK_AVAILABILITY_PCT) as\
+      \ avg_stock FROM VW_STOCK_AVAILABILITY_DealerPulse GROUP BY DealerPulse_NAME\n)\nSELECT t.DealerPulse_NAME, t.avg_tat, b.avg_backorder,\
+      \ s.avg_stock\nFROM turnaround t\nLEFT JOIN backorder b ON t.DealerPulse_NAME = b.DealerPulse_NAME\nLEFT JOIN stock s ON t.DealerPulse_NAME\
+      \ = s.DealerPulse_NAME\n"
     key_fixes:
     - '1. Added table aliases: t, b, s for each CTE'
     - '2. Used explicit ON clauses: t.DealerPulse_NAME = b.DealerPulse_NAME (not ambiguous)'
@@ -1017,15 +1010,14 @@ cortex_error_prevention:
     cortex_action: REJECT immediately, explain the ambiguous join, then regenerate with CTEs and table aliases
   - error_id: ERROR_MISSING_PREAGGREGATE
     description: GROUP BY DealerPulse_NAME fails when joining tables with PRODUCT_CATEGORY
-    example_wrong: SELECT * FROM VW_STOCK_AVAILABILITY_DealerPulse JOIN VW_BACKORDER_INCIDENCE ON DealerPulse_NAME = DealerPulse_NAME
-      GROUP BY DealerPulse_NAME
-    reason: VW_STOCK_AVAILABILITY_DealerPulse has multiple rows per DealerPulse (one per PRODUCT_CATEGORY). Joining without
-      pre-aggregation creates duplicate rows
+    example_wrong: SELECT * FROM VW_STOCK_AVAILABILITY_DealerPulse JOIN VW_BACKORDER_INCIDENCE ON DealerPulse_NAME = DealerPulse_NAME GROUP
+      BY DealerPulse_NAME
+    reason: VW_STOCK_AVAILABILITY_DealerPulse has multiple rows per DealerPulse (one per PRODUCT_CATEGORY). Joining without pre-aggregation
+      creates duplicate rows
     fix_template: "WITH stock_agg AS (\n  SELECT DealerPulse_NAME, AVG(STOCK_AVAILABILITY_PCT) as avg_stock FROM VW_STOCK_AVAILABILITY_DealerPulse\n\
       \  GROUP BY DealerPulse_NAME  -- Aggregate away the PRODUCT_CATEGORY dimension\n),\nbackorder_agg AS (\n  SELECT DealerPulse_NAME,\
-      \ AVG(BACKORDER_INCIDENCE_PCT) as avg_backorder FROM VW_BACKORDER_INCIDENCE\n  GROUP BY DealerPulse_NAME\n)\nSELECT\
-      \ s.DealerPulse_NAME, s.avg_stock, b.avg_backorder\nFROM stock_agg s\nLEFT JOIN backorder_agg b ON s.DealerPulse_NAME\
-      \ = b.DealerPulse_NAME\n"
+      \ AVG(BACKORDER_INCIDENCE_PCT) as avg_backorder FROM VW_BACKORDER_INCIDENCE\n  GROUP BY DealerPulse_NAME\n)\nSELECT s.DealerPulse_NAME,\
+      \ s.avg_stock, b.avg_backorder\nFROM stock_agg s\nLEFT JOIN backorder_agg b ON s.DealerPulse_NAME = b.DealerPulse_NAME\n"
     key_fixes:
     - 1. Group by DealerPulse_NAME only (not PRODUCT_CATEGORY)
     - 2. This collapses all product categories into one stock availability value per DealerPulse
@@ -1103,8 +1095,8 @@ tables:
     database: DealerPulse
     schema: INFORMATION_MART
     table: VW_BACKORDER_INCIDENCE
-  description: 'Percentage of orders with backorders by DealerPulse. Monthly pre-aggregated rates for inventory analysis.
-    Primary join key: DealerPulse_NAME'
+  description: 'Percentage of orders with backorders by DealerPulse. Monthly pre-aggregated rates for inventory analysis. Primary
+    join key: DealerPulse_NAME'
   dimensions:
   - name: DealerPulse_NAME
     expr: DealerPulse_NAME
@@ -1220,8 +1212,8 @@ tables:
     database: DealerPulse
     schema: INFORMATION_MART
     table: VW_CASH_CONVERSION_CYCLE
-  description: 'Financial efficiency metrics including DSO, DIO, DPO, and CCC per DealerPulse. Monthly pre-aggregated for
-    working capital analysis. Primary join key: DealerPulse_NAME'
+  description: 'Financial efficiency metrics including DSO, DIO, DPO, and CCC per DealerPulse. Monthly pre-aggregated for working
+    capital analysis. Primary join key: DealerPulse_NAME'
   dimensions:
   - name: DealerPulse_NAME
     expr: DealerPulse_NAME
@@ -1274,8 +1266,8 @@ tables:
     database: DealerPulse
     schema: INFORMATION_MART
     table: VW_DealerPulse_CONTRIBUTION_MARGIN
-  description: 'Contribution margin analysis by DealerPulse, monthly pre-aggregated. Join on DealerPulse_NAME for margin and
-    profitability analysis. PRIMARY JOIN KEY: DealerPulse_NAME'
+  description: 'Contribution margin analysis by DealerPulse, monthly pre-aggregated. Join on DealerPulse_NAME for margin and profitability
+    analysis. PRIMARY JOIN KEY: DealerPulse_NAME'
   dimensions:
   - name: DealerPulse_NAME
     expr: DealerPulse_NAME
@@ -1330,8 +1322,7 @@ tables:
     database: DealerPulse
     schema: INFORMATION_MART
     table: VW_DealerPulse_REVENUE_GROWTH
-  description: 'Month-over-month revenue growth percentage by DealerPulse. Pre-aggregated monthly data. Primary join key:
-    DealerPulse_NAME'
+  description: 'Month-over-month revenue growth percentage by DealerPulse. Pre-aggregated monthly data. Primary join key: DealerPulse_NAME'
   dimensions:
   - name: DealerPulse_NAME
     expr: DealerPulse_NAME
@@ -1483,8 +1474,7 @@ tables:
     database: DealerPulse
     schema: INFORMATION_MART
     table: VW_SALES_PER_PRODUCT_CATEGORY
-  description: 'Sales revenue and quantity by product category per DealerPulse, monthly pre-aggregated. Primary join key:
-    DealerPulse_NAME'
+  description: 'Sales revenue and quantity by product category per DealerPulse, monthly pre-aggregated. Primary join key: DealerPulse_NAME'
   dimensions:
   - name: DealerPulse_NAME
     expr: DealerPulse_NAME
@@ -1587,8 +1577,7 @@ tables:
     database: DealerPulse
     schema: INFORMATION_MART
     table: VW_GROSS_PROFIT_MARGIN_TEST
-  description: 'Gross Profit Margin Test — columns: DealerPulse_NAME, PERIOD_MONTH, PERIOD_YEAR, TOTAL_REVENUE, TOTAL_COGS,
-    GROSS_PROFIT_MARGIN_PCT'
+  description: 'Gross Profit Margin Test — columns: DealerPulse_NAME, PERIOD_MONTH, PERIOD_YEAR, TOTAL_REVENUE, TOTAL_COGS, GROSS_PROFIT_MARGIN_PCT'
   dimensions:
   - name: DealerPulse_NAME
     expr: DealerPulse_NAME
@@ -1624,28 +1613,26 @@ tables:
     synonyms: *id002
     default_aggregation: avg
 relationships:
-- description: Service metrics by DealerPulse - aggregate across all periods, join on DealerPulse_NAME only with explicit
-    table aliases
+- description: Service metrics by DealerPulse - aggregate across all periods, join on DealerPulse_NAME only with explicit table aliases
   join_key:
   - DealerPulse_NAME
   join_pattern: "WITH service_agg AS (\n  SELECT DealerPulse_NAME, AVG(AVG_TURNAROUND_HOURS) as avg_tat FROM VW_AVERAGE_REPAIR_TURNAROUND_TIME\
-    \ GROUP BY DealerPulse_NAME\n),\nlead_agg AS (\n  SELECT DealerPulse_NAME, AVG(AVG_ORDER_LEAD_TIME_DAYS) as avg_lead FROM\
-    \ VW_ORDER_LEAD_TIME GROUP BY DealerPulse_NAME\n)\nSELECT s.DealerPulse_NAME, s.avg_tat, l.avg_lead FROM service_agg s\
-    \ LEFT JOIN lead_agg l ON s.DealerPulse_NAME = l.DealerPulse_NAME\n"
+    \ GROUP BY DealerPulse_NAME\n),\nlead_agg AS (\n  SELECT DealerPulse_NAME, AVG(AVG_ORDER_LEAD_TIME_DAYS) as avg_lead FROM VW_ORDER_LEAD_TIME\
+    \ GROUP BY DealerPulse_NAME\n)\nSELECT s.DealerPulse_NAME, s.avg_tat, l.avg_lead FROM service_agg s LEFT JOIN lead_agg l ON s.DealerPulse_NAME\
+    \ = l.DealerPulse_NAME\n"
   primary_table: VW_AVERAGE_REPAIR_TURNAROUND_TIME
   joinable_tables:
   - VW_ORDER_LEAD_TIME
   - VW_STOCK_AVAILABILITY_DealerPulse
   - VW_BACKORDER_INCIDENCE
-  critical_note: Use explicit table aliases (s.DealerPulse_NAME, l.DealerPulse_NAME) in ON clause. NEVER use ON DealerPulse_NAME
-    = DealerPulse_NAME
+  critical_note: Use explicit table aliases (s.DealerPulse_NAME, l.DealerPulse_NAME) in ON clause. NEVER use ON DealerPulse_NAME = DealerPulse_NAME
 - description: Inventory metrics join for stock and backorder analysis - MUST use table aliases and aggregate first
   join_key:
   - DealerPulse_NAME
   join_pattern: "WITH stock_agg AS (\n  SELECT DealerPulse_NAME, AVG(STOCK_AVAILABILITY_PCT) as avg_stock FROM VW_STOCK_AVAILABILITY_DealerPulse\
-    \ GROUP BY DealerPulse_NAME\n),\nbackorder_agg AS (\n  SELECT DealerPulse_NAME, AVG(BACKORDER_INCIDENCE_PCT) as avg_backorder\
-    \ FROM VW_BACKORDER_INCIDENCE GROUP BY DealerPulse_NAME\n)\nSELECT st.DealerPulse_NAME, st.avg_stock, b.avg_backorder\
-    \ FROM stock_agg st LEFT JOIN backorder_agg b ON st.DealerPulse_NAME = b.DealerPulse_NAME\n"
+    \ GROUP BY DealerPulse_NAME\n),\nbackorder_agg AS (\n  SELECT DealerPulse_NAME, AVG(BACKORDER_INCIDENCE_PCT) as avg_backorder FROM\
+    \ VW_BACKORDER_INCIDENCE GROUP BY DealerPulse_NAME\n)\nSELECT st.DealerPulse_NAME, st.avg_stock, b.avg_backorder FROM stock_agg\
+    \ st LEFT JOIN backorder_agg b ON st.DealerPulse_NAME = b.DealerPulse_NAME\n"
   primary_table: VW_STOCK_AVAILABILITY_DealerPulse
   joinable_tables:
   - VW_BACKORDER_INCIDENCE
@@ -1655,9 +1642,9 @@ relationships:
   join_key:
   - DealerPulse_NAME
   join_pattern: "WITH sales_agg AS (\n  SELECT DealerPulse_NAME, SUM(TOTAL_QUANTITY) as total_units FROM VW_SALES_PER_PRODUCT_CATEGORY\
-    \ GROUP BY DealerPulse_NAME\n),\nmargin_agg AS (\n  SELECT DealerPulse_NAME, AVG(GROSS_PROFIT_MARGIN_PCT) as avg_margin\
-    \ FROM VW_GROSS_PROFIT_MARGIN GROUP BY DealerPulse_NAME\n)\nSELECT sa.DealerPulse_NAME, sa.total_units, m.avg_margin FROM\
-    \ sales_agg sa LEFT JOIN margin_agg m ON sa.DealerPulse_NAME = m.DealerPulse_NAME\n"
+    \ GROUP BY DealerPulse_NAME\n),\nmargin_agg AS (\n  SELECT DealerPulse_NAME, AVG(GROSS_PROFIT_MARGIN_PCT) as avg_margin FROM VW_GROSS_PROFIT_MARGIN\
+    \ GROUP BY DealerPulse_NAME\n)\nSELECT sa.DealerPulse_NAME, sa.total_units, m.avg_margin FROM sales_agg sa LEFT JOIN margin_agg\
+    \ m ON sa.DealerPulse_NAME = m.DealerPulse_NAME\n"
   primary_table: VW_SALES_PER_PRODUCT_CATEGORY
   joinable_tables:
   - VW_GROSS_PROFIT_MARGIN
@@ -1665,8 +1652,7 @@ relationships:
   - VW_AVERAGE_REPAIR_TURNAROUND_TIME
   - VW_ORDER_LEAD_TIME
   critical_note: Each table alias must be different (sa, m, t, etc). NEVER reuse the same alias for multiple tables
-- description: Revenue growth analysis - aggregate by DealerPulse_NAME using CTEs, then join on DealerPulse_NAME with explicit
-    aliases
+- description: Revenue growth analysis - aggregate by DealerPulse_NAME using CTEs, then join on DealerPulse_NAME with explicit aliases
   join_key:
   - DealerPulse_NAME
   join_pattern: "WITH revenue_agg AS (\n  SELECT DealerPulse_NAME, AVG(REVENUE_GROWTH_MOM_PERCENT) as avg_growth FROM VW_DealerPulse_REVENUE_GROWTH\
@@ -1680,10 +1666,10 @@ relationships:
 - description: Financial efficiency metrics - aggregate first in CTEs, then join on DealerPulse_NAME only using explicit aliases
   join_key:
   - DealerPulse_NAME
-  join_pattern: "WITH cash_agg AS (\n  SELECT DealerPulse_NAME, AVG(CCC) as avg_ccc FROM VW_CASH_CONVERSION_CYCLE GROUP BY\
-    \ DealerPulse_NAME\n),\nprofit_agg AS (\n  SELECT DealerPulse_NAME, AVG(GROSS_PROFIT_MARGIN_PCT) as avg_gpm FROM VW_GROSS_PROFIT_MARGIN\
-    \ GROUP BY DealerPulse_NAME\n)\nSELECT c.DealerPulse_NAME, c.avg_ccc, p.avg_gpm FROM cash_agg c LEFT JOIN profit_agg p\
-    \ ON c.DealerPulse_NAME = p.DealerPulse_NAME\n"
+  join_pattern: "WITH cash_agg AS (\n  SELECT DealerPulse_NAME, AVG(CCC) as avg_ccc FROM VW_CASH_CONVERSION_CYCLE GROUP BY DealerPulse_NAME\n\
+    ),\nprofit_agg AS (\n  SELECT DealerPulse_NAME, AVG(GROSS_PROFIT_MARGIN_PCT) as avg_gpm FROM VW_GROSS_PROFIT_MARGIN GROUP BY\
+    \ DealerPulse_NAME\n)\nSELECT c.DealerPulse_NAME, c.avg_ccc, p.avg_gpm FROM cash_agg c LEFT JOIN profit_agg p ON c.DealerPulse_NAME =\
+    \ p.DealerPulse_NAME\n"
   primary_table: VW_CASH_CONVERSION_CYCLE
   joinable_tables:
   - VW_GROSS_PROFIT_MARGIN
@@ -1702,9 +1688,8 @@ query_patterns:
 - pattern_name: DealerPulse Profitability Analysis
   description: Combine financial metrics for complete profitability view
   template: "SELECT \n  m.DealerPulse_NAME,\n  m.GROSS_PROFIT_MARGIN_PCT,\n  c.CCC,\n  cm.CONTRIBUTION_MARGIN_PCT\nFROM DealerPulse.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN\
-    \ m\nLEFT JOIN DealerPulse.INFORMATION_MART.VW_CASH_CONVERSION_CYCLE c\n  ON m.DealerPulse_NAME = c.DealerPulse_NAME\n\
-    LEFT JOIN DealerPulse.INFORMATION_MART.VW_DealerPulse_CONTRIBUTION_MARGIN cm\n  ON m.DealerPulse_NAME = cm.DealerPulse_NAME\n\
-    ORDER BY m.GROSS_PROFIT_MARGIN_PCT DESC"
+    \ m\nLEFT JOIN DealerPulse.INFORMATION_MART.VW_CASH_CONVERSION_CYCLE c\n  ON m.DealerPulse_NAME = c.DealerPulse_NAME\nLEFT JOIN DealerPulse.INFORMATION_MART.VW_DealerPulse_CONTRIBUTION_MARGIN\
+    \ cm\n  ON m.DealerPulse_NAME = cm.DealerPulse_NAME\nORDER BY m.GROSS_PROFIT_MARGIN_PCT DESC"
 - pattern_name: DealerPulse Revenue Growth Analysis
   description: Analyze revenue growth trends with profitability
   template: "SELECT \n  r.DealerPulse_NAME,\n  r.PERIOD_YEAR,\n  r.REVENUE,\n  r.REVENUE_GROWTH_MOM_PERCENT,\n  v.UNITS_SOLD,\n\
@@ -1713,35 +1698,33 @@ query_patterns:
     \ m\n  ON r.DealerPulse_NAME = m.DealerPulse_NAME\nORDER BY r.REVENUE_GROWTH_MOM_PERCENT DESC"
 - pattern_name: DealerPulse Service & Sales Performance
   description: Combine service efficiency with sales volume - aggregate first, then join on DealerPulse_NAME
-  template: "WITH service_agg AS (\n  SELECT \n    DealerPulse_NAME,\n    AVG(AVG_TURNAROUND_HOURS) as avg_repair_hours\n\
-    \  FROM DealerPulse.INFORMATION_MART.VW_AVERAGE_REPAIR_TURNAROUND_TIME\n  GROUP BY DealerPulse_NAME\n),\nlead_agg AS (\n\
-    \  SELECT \n    DealerPulse_NAME,\n    AVG(AVG_ORDER_LEAD_TIME_DAYS) as avg_lead_time\n  FROM DealerPulse.INFORMATION_MART.VW_ORDER_LEAD_TIME\n\
+  template: "WITH service_agg AS (\n  SELECT \n    DealerPulse_NAME,\n    AVG(AVG_TURNAROUND_HOURS) as avg_repair_hours\n  FROM\
+    \ DealerPulse.INFORMATION_MART.VW_AVERAGE_REPAIR_TURNAROUND_TIME\n  GROUP BY DealerPulse_NAME\n),\nlead_agg AS (\n  SELECT \n  \
+    \  DealerPulse_NAME,\n    AVG(AVG_ORDER_LEAD_TIME_DAYS) as avg_lead_time\n  FROM DealerPulse.INFORMATION_MART.VW_ORDER_LEAD_TIME\n\
     \  GROUP BY DealerPulse_NAME\n),\nrevenue_agg AS (\n  SELECT \n    DealerPulse_NAME,\n    SUM(TOTAL_REVENUE) as total_revenue\n\
-    \  FROM DealerPulse.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN\n  GROUP BY DealerPulse_NAME\n)\nSELECT \n  t.DealerPulse_NAME,\n\
-    \  t.avg_repair_hours,\n  l.avg_lead_time,\n  r.total_revenue as sales_revenue\nFROM service_agg t\nLEFT JOIN lead_agg\
-    \ l ON t.DealerPulse_NAME = l.DealerPulse_NAME\nLEFT JOIN revenue_agg r ON t.DealerPulse_NAME = r.DealerPulse_NAME\nORDER\
-    \ BY t.avg_repair_hours ASC"
+    \  FROM DealerPulse.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN\n  GROUP BY DealerPulse_NAME\n)\nSELECT \n  t.DealerPulse_NAME,\n  t.avg_repair_hours,\n\
+    \  l.avg_lead_time,\n  r.total_revenue as sales_revenue\nFROM service_agg t\nLEFT JOIN lead_agg l ON t.DealerPulse_NAME = l.DealerPulse_NAME\n\
+    LEFT JOIN revenue_agg r ON t.DealerPulse_NAME = r.DealerPulse_NAME\nORDER BY t.avg_repair_hours ASC"
 - pattern_name: Service Efficiency Comparison Across DealerPulses
   description: Compare service efficiency metrics across DealerPulses - aggregate first, then join on DealerPulse_NAME only
   template: "WITH service_metrics AS (\n  SELECT \n    t.DealerPulse_NAME,\n    AVG(t.AVG_TURNAROUND_HOURS) as avg_repair_time,\n\
     \    AVG(s.STOCK_AVAILABILITY_PCT) as avg_stock_availability,\n    AVG(b.BACKORDER_INCIDENCE_PCT) as avg_backorder_rate,\n\
     \    AVG(o.AVG_ORDER_LEAD_TIME_DAYS) as avg_lead_time\n  FROM DealerPulse.INFORMATION_MART.VW_AVERAGE_REPAIR_TURNAROUND_TIME\
-    \ t\n  LEFT JOIN DealerPulse.INFORMATION_MART.VW_STOCK_AVAILABILITY_DealerPulse s \n    ON t.DealerPulse_NAME = s.DealerPulse_NAME\n\
-    \  LEFT JOIN DealerPulse.INFORMATION_MART.VW_BACKORDER_INCIDENCE b \n    ON t.DealerPulse_NAME = b.DealerPulse_NAME\n\
-    \  LEFT JOIN DealerPulse.INFORMATION_MART.VW_ORDER_LEAD_TIME o \n    ON t.DealerPulse_NAME = o.DealerPulse_NAME\n  GROUP\
-    \ BY t.DealerPulse_NAME\n)\nSELECT *,\n  (CASE \n    WHEN avg_repair_time <= (SELECT AVG(avg_repair_time) FROM service_metrics)\
-    \ \n    AND avg_stock_availability >= (SELECT AVG(avg_stock_availability) FROM service_metrics)\n    AND avg_backorder_rate\
-    \ <= (SELECT AVG(avg_backorder_rate) FROM service_metrics)\n    THEN 'High Efficiency'\n    ELSE 'Needs Improvement'\n\
-    \  END) as efficiency_rating\nFROM service_metrics\nORDER BY avg_repair_time ASC"
+    \ t\n  LEFT JOIN DealerPulse.INFORMATION_MART.VW_STOCK_AVAILABILITY_DealerPulse s \n    ON t.DealerPulse_NAME = s.DealerPulse_NAME\n  LEFT\
+    \ JOIN DealerPulse.INFORMATION_MART.VW_BACKORDER_INCIDENCE b \n    ON t.DealerPulse_NAME = b.DealerPulse_NAME\n  LEFT JOIN DealerPulse.INFORMATION_MART.VW_ORDER_LEAD_TIME\
+    \ o \n    ON t.DealerPulse_NAME = o.DealerPulse_NAME\n  GROUP BY t.DealerPulse_NAME\n)\nSELECT *,\n  (CASE \n    WHEN avg_repair_time\
+    \ <= (SELECT AVG(avg_repair_time) FROM service_metrics) \n    AND avg_stock_availability >= (SELECT AVG(avg_stock_availability)\
+    \ FROM service_metrics)\n    AND avg_backorder_rate <= (SELECT AVG(avg_backorder_rate) FROM service_metrics)\n    THEN\
+    \ 'High Efficiency'\n    ELSE 'Needs Improvement'\n  END) as efficiency_rating\nFROM service_metrics\nORDER BY avg_repair_time\
+    \ ASC"
 - pattern_name: DealerPulse Inventory Health
   description: Analyze stock availability and backorder issues - aggregate first, then join on DealerPulse_NAME
   template: "WITH stock_agg AS (\n  SELECT \n    DealerPulse_NAME,\n    AVG(STOCK_AVAILABILITY_PCT) as avg_stock_availability,\n\
-    \    PRODUCT_CATEGORY\n  FROM DealerPulse.INFORMATION_MART.VW_STOCK_AVAILABILITY_DealerPulse\n  GROUP BY DealerPulse_NAME,\
-    \ PRODUCT_CATEGORY\n),\nbackorder_agg AS (\n  SELECT \n    DealerPulse_NAME,\n    AVG(BACKORDER_INCIDENCE_PCT) as avg_backorder_rate\n\
-    \  FROM DealerPulse.INFORMATION_MART.VW_BACKORDER_INCIDENCE\n  GROUP BY DealerPulse_NAME\n)\nSELECT \n  s.DealerPulse_NAME,\n\
-    \  s.PRODUCT_CATEGORY,\n  s.avg_stock_availability as STOCK_AVAILABILITY_PCT,\n  b.avg_backorder_rate as BACKORDER_INCIDENCE_PCT\n\
-    FROM stock_agg s\nLEFT JOIN backorder_agg b\n  ON s.DealerPulse_NAME = b.DealerPulse_NAME\nORDER BY s.avg_stock_availability\
-    \ ASC"
+    \    PRODUCT_CATEGORY\n  FROM DealerPulse.INFORMATION_MART.VW_STOCK_AVAILABILITY_DealerPulse\n  GROUP BY DealerPulse_NAME, PRODUCT_CATEGORY\n\
+    ),\nbackorder_agg AS (\n  SELECT \n    DealerPulse_NAME,\n    AVG(BACKORDER_INCIDENCE_PCT) as avg_backorder_rate\n  FROM DealerPulse.INFORMATION_MART.VW_BACKORDER_INCIDENCE\n\
+    \  GROUP BY DealerPulse_NAME\n)\nSELECT \n  s.DealerPulse_NAME,\n  s.PRODUCT_CATEGORY,\n  s.avg_stock_availability as STOCK_AVAILABILITY_PCT,\n\
+    \  b.avg_backorder_rate as BACKORDER_INCIDENCE_PCT\nFROM stock_agg s\nLEFT JOIN backorder_agg b\n  ON s.DealerPulse_NAME =\
+    \ b.DealerPulse_NAME\nORDER BY s.avg_stock_availability ASC"
 - pattern_name: Product Category Sales Mix
   description: Analyze sales distribution across product categories
   template: "SELECT \n  DealerPulse_NAME,\n  PRODUCT_CATEGORY,\n  TOTAL_REVENUE,\n  TOTAL_QUANTITY,\n  ROUND(100.0 * TOTAL_REVENUE\
@@ -1780,14 +1763,14 @@ verified_queries:
   prescriptive_guidance: Flag CCC >60 as CRITICAL working capital issue requiring immediate action
   sql: "SELECT \n  DealerPulse_NAME,\n  CCC,\n  DSO,\n  DIO,\n  DPO,\n  CASE \n    WHEN CCC > 60 THEN 'CRITICAL - High working\
     \ capital stress'\n    WHEN CCC > 45 THEN 'WARNING - Above-average cycle time'\n    WHEN CCC < 30 THEN 'GOOD - Efficient\
-    \ cash management'\n    ELSE 'NORMAL'\n  END AS CASH_HEALTH\nFROM DealerPulse.INFORMATION_MART.VW_CASH_CONVERSION_CYCLE\n\
-    ORDER BY CCC DESC"
+    \ cash management'\n    ELSE 'NORMAL'\n  END AS CASH_HEALTH\nFROM DealerPulse.INFORMATION_MART.VW_CASH_CONVERSION_CYCLE\nORDER\
+    \ BY CCC DESC"
 - name: DealerPulse_gross_margin
   question: Show the gross profit margin for all DealerPulses. Who has the lowest margins?
   use_as_onboarding_question: true
   sql: "SELECT \n  DealerPulse_NAME,\n  TOTAL_REVENUE,\n  TOTAL_COGS,\n  GROSS_PROFIT_MARGIN_PCT,\n  ROUND(100.0 * GROSS_PROFIT_MARGIN_PCT\
-    \ / AVG(GROSS_PROFIT_MARGIN_PCT) OVER (), 1) AS PCT_VS_AVG\nFROM DealerPulse.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN\n\
-    ORDER BY GROSS_PROFIT_MARGIN_PCT ASC"
+    \ / AVG(GROSS_PROFIT_MARGIN_PCT) OVER (), 1) AS PCT_VS_AVG\nFROM DealerPulse.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN\nORDER\
+    \ BY GROSS_PROFIT_MARGIN_PCT ASC"
 - name: high_growth_DealerPulses
   question: Which DealerPulses had strong revenue growth? Show growth trends.
   use_as_onboarding_question: true
@@ -1801,11 +1784,11 @@ verified_queries:
   expected_row_count: All DealerPulses with growth data
   sort_order: By REVENUE_GROWTH_MOM_PERCENT descending (highest growth first)
   visual_recommendation: Line chart showing growth trends over time; or scatter plot X=revenue, Y=growth%, colored by category
-  prescriptive_guidance: Cite exact growth %; flag >10% growth DealerPulses (maintain strategy), <0% declining DealerPulses
-    (investigate market/competitive issues)
-  sql: "SELECT\n  DealerPulse_NAME,\n  PERIOD_YEAR,\n  REVENUE,\n  PREV_MONTH_REVENUE,\n  REVENUE_GROWTH_MOM_PERCENT,\n  CASE\
-    \ \n    WHEN REVENUE_GROWTH_MOM_PERCENT > 15 THEN 'STRONG'\n    WHEN REVENUE_GROWTH_MOM_PERCENT > 5 THEN 'MODERATE'\n\
-    \    WHEN REVENUE_GROWTH_MOM_PERCENT < 0 THEN 'DECLINING'\n    ELSE 'FLAT'\n  END AS GROWTH_CATEGORY\nFROM DealerPulse.INFORMATION_MART.VW_DealerPulse_REVENUE_GROWTH\n\
+  prescriptive_guidance: Cite exact growth %; flag >10% growth DealerPulses (maintain strategy), <0% declining DealerPulses (investigate
+    market/competitive issues)
+  sql: "SELECT\n  DealerPulse_NAME,\n  PERIOD_YEAR,\n  REVENUE,\n  PREV_MONTH_REVENUE,\n  REVENUE_GROWTH_MOM_PERCENT,\n  CASE \n\
+    \    WHEN REVENUE_GROWTH_MOM_PERCENT > 15 THEN 'STRONG'\n    WHEN REVENUE_GROWTH_MOM_PERCENT > 5 THEN 'MODERATE'\n   \
+    \ WHEN REVENUE_GROWTH_MOM_PERCENT < 0 THEN 'DECLINING'\n    ELSE 'FLAT'\n  END AS GROWTH_CATEGORY\nFROM DealerPulse.INFORMATION_MART.VW_DealerPulse_REVENUE_GROWTH\n\
     ORDER BY REVENUE_GROWTH_MOM_PERCENT DESC"
 - name: DealerPulse_inventory_health
   question: Show stock availability and backorder rates by DealerPulse. Which DealerPulses have inventory issues?
@@ -1820,9 +1803,9 @@ verified_queries:
   visual_recommendation: 'Bubble chart: X=stock availability, Y=backorder rate, colored red if CRITICAL, yellow if WARNING,
     green if HEALTHY'
   prescriptive_guidance: CRITICAL if availability <85% AND backorders >15% - needs immediate supplier/forecasting action
-  sql: "WITH stock_agg AS (\n  SELECT \n    DealerPulse_NAME,\n    AVG(STOCK_AVAILABILITY_PCT) as avg_stock_availability\n\
-    \  FROM DealerPulse.INFORMATION_MART.VW_STOCK_AVAILABILITY_DealerPulse\n  GROUP BY DealerPulse_NAME\n),\nbackorder_agg\
-    \ AS (\n  SELECT \n    DealerPulse_NAME,\n    AVG(BACKORDER_INCIDENCE_PCT) as avg_backorder_rate\n  FROM DealerPulse.INFORMATION_MART.VW_BACKORDER_INCIDENCE\n\
+  sql: "WITH stock_agg AS (\n  SELECT \n    DealerPulse_NAME,\n    AVG(STOCK_AVAILABILITY_PCT) as avg_stock_availability\n  FROM\
+    \ DealerPulse.INFORMATION_MART.VW_STOCK_AVAILABILITY_DealerPulse\n  GROUP BY DealerPulse_NAME\n),\nbackorder_agg AS (\n  SELECT \n  \
+    \  DealerPulse_NAME,\n    AVG(BACKORDER_INCIDENCE_PCT) as avg_backorder_rate\n  FROM DealerPulse.INFORMATION_MART.VW_BACKORDER_INCIDENCE\n\
     \  GROUP BY DealerPulse_NAME\n)\nSELECT \n  s.DealerPulse_NAME,\n  ROUND(s.avg_stock_availability, 1) as avg_stock_availability,\n\
     \  COALESCE(b.avg_backorder_rate, 0) as backorder_incidence,\n  CASE\n    WHEN s.avg_stock_availability < 85 AND COALESCE(b.avg_backorder_rate,\
     \ 0) > 15 \n      THEN 'CRITICAL - Both low availability and high backorders'\n    WHEN s.avg_stock_availability < 85\
@@ -1837,8 +1820,7 @@ verified_queries:
     \ 'FAIR'\n    ELSE 'SLOW'\n  END AS EFFICIENCY_RATING\nFROM DealerPulse.INFORMATION_MART.VW_AVERAGE_REPAIR_TURNAROUND_TIME\n\
     GROUP BY DealerPulse_NAME\nORDER BY avg_turnaround_hours DESC;"
 - name: compare_service_efficiency_across_DealerPulses
-  question: Compare service efficiency across DealerPulses. Show repair time, stock availability, backorder rate, and lead
-    time.
+  question: Compare service efficiency across DealerPulses. Show repair time, stock availability, backorder rate, and lead time.
   use_as_onboarding_question: true
   expected_columns:
   - 'DealerPulse_NAME: DealerPulse identifier'
@@ -1850,35 +1832,34 @@ verified_queries:
   expected_row_count: All DealerPulses
   sort_order: By avg_repair_time ascending (fastest service first)
   visual_recommendation: Radar chart or scorecard showing 5 metrics per DealerPulse with color-coding
-  prescriptive_guidance: Compare each DealerPulse to company averages; highlight DealerPulses below average on critical metrics;
-    suggest targeted improvements
-  sql: "WITH service_metrics AS (\n  SELECT \n    t.DealerPulse_NAME,\n    AVG(t.AVG_TURNAROUND_HOURS) as avg_repair_time,\n\
-    \    AVG(s.STOCK_AVAILABILITY_PCT) as avg_stock_availability,\n    AVG(b.BACKORDER_INCIDENCE_PCT) as avg_backorder_rate,\n\
+  prescriptive_guidance: Compare each DealerPulse to company averages; highlight DealerPulses below average on critical metrics; suggest
+    targeted improvements
+  sql: "WITH service_metrics AS (\n  SELECT \n    t.DealerPulse_NAME,\n    AVG(t.AVG_TURNAROUND_HOURS) as avg_repair_time,\n  \
+    \  AVG(s.STOCK_AVAILABILITY_PCT) as avg_stock_availability,\n    AVG(b.BACKORDER_INCIDENCE_PCT) as avg_backorder_rate,\n\
     \    AVG(o.AVG_ORDER_LEAD_TIME_DAYS) as avg_lead_time\n  FROM DealerPulse.INFORMATION_MART.VW_AVERAGE_REPAIR_TURNAROUND_TIME\
-    \ t\n  LEFT JOIN DealerPulse.INFORMATION_MART.VW_STOCK_AVAILABILITY_DealerPulse s \n    ON t.DealerPulse_NAME = s.DealerPulse_NAME\n\
-    \  LEFT JOIN DealerPulse.INFORMATION_MART.VW_BACKORDER_INCIDENCE b \n    ON t.DealerPulse_NAME = b.DealerPulse_NAME\n\
-    \  LEFT JOIN DealerPulse.INFORMATION_MART.VW_ORDER_LEAD_TIME o \n    ON t.DealerPulse_NAME = o.DealerPulse_NAME\n  GROUP\
-    \ BY t.DealerPulse_NAME\n)\nSELECT *,\n  (CASE \n    WHEN avg_repair_time <= (SELECT AVG(avg_repair_time) FROM service_metrics)\
-    \ \n    AND avg_stock_availability >= (SELECT AVG(avg_stock_availability) FROM service_metrics)\n    AND avg_backorder_rate\
-    \ <= (SELECT AVG(avg_backorder_rate) FROM service_metrics)\n    THEN 'High Efficiency'\n    ELSE 'Needs Improvement'\n\
-    \  END) as efficiency_rating\nFROM service_metrics\nORDER BY avg_repair_time ASC;"
+    \ t\n  LEFT JOIN DealerPulse.INFORMATION_MART.VW_STOCK_AVAILABILITY_DealerPulse s \n    ON t.DealerPulse_NAME = s.DealerPulse_NAME\n  LEFT\
+    \ JOIN DealerPulse.INFORMATION_MART.VW_BACKORDER_INCIDENCE b \n    ON t.DealerPulse_NAME = b.DealerPulse_NAME\n  LEFT JOIN DealerPulse.INFORMATION_MART.VW_ORDER_LEAD_TIME\
+    \ o \n    ON t.DealerPulse_NAME = o.DealerPulse_NAME\n  GROUP BY t.DealerPulse_NAME\n)\nSELECT *,\n  (CASE \n    WHEN avg_repair_time\
+    \ <= (SELECT AVG(avg_repair_time) FROM service_metrics) \n    AND avg_stock_availability >= (SELECT AVG(avg_stock_availability)\
+    \ FROM service_metrics)\n    AND avg_backorder_rate <= (SELECT AVG(avg_backorder_rate) FROM service_metrics)\n    THEN\
+    \ 'High Efficiency'\n    ELSE 'Needs Improvement'\n  END) as efficiency_rating\nFROM service_metrics\nORDER BY avg_repair_time\
+    \ ASC;"
 - name: DealerPulse_operational_metrics
   question: 'Compare DealerPulse operational performance: lead time, service efficiency, and sales.'
-  sql: "WITH service_agg AS (\n  SELECT \n    DealerPulse_NAME,\n    AVG(AVG_TURNAROUND_HOURS) as avg_repair_hours\n  FROM\
-    \ DealerPulse.INFORMATION_MART.VW_AVERAGE_REPAIR_TURNAROUND_TIME\n  GROUP BY DealerPulse_NAME\n),\nlead_agg AS (\n  SELECT\
-    \ \n    DealerPulse_NAME,\n    AVG(AVG_ORDER_LEAD_TIME_DAYS) as avg_lead_time_days\n  FROM DealerPulse.INFORMATION_MART.VW_ORDER_LEAD_TIME\n\
-    \  GROUP BY DealerPulse_NAME\n),\nrevenue_agg AS (\n  SELECT \n    DealerPulse_NAME,\n    SUM(TOTAL_REVENUE) as total_revenue\n\
-    \  FROM DealerPulse.INFORMATION_MART.VW_SALES_PER_PRODUCT_CATEGORY\n  GROUP BY DealerPulse_NAME\n),\nmargin_agg AS (\n\
-    \  SELECT \n    DealerPulse_NAME,\n    AVG(GROSS_PROFIT_MARGIN_PCT) as avg_gross_profit_margin_pct\n  FROM DealerPulse.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN\n\
-    \  GROUP BY DealerPulse_NAME\n)\nSELECT\n  t.DealerPulse_NAME,\n  ROUND(t.avg_repair_hours, 1) as avg_repair_hours,\n\
-    \  ROUND(l.avg_lead_time_days, 1) as avg_lead_time_days,\n  r.total_revenue,\n  ROUND(m.avg_gross_profit_margin_pct, 2)\
-    \ as GROSS_PROFIT_MARGIN_PCT\nFROM service_agg t\nLEFT JOIN lead_agg l ON t.DealerPulse_NAME = l.DealerPulse_NAME\nLEFT\
-    \ JOIN revenue_agg r ON t.DealerPulse_NAME = r.DealerPulse_NAME\nLEFT JOIN margin_agg m ON t.DealerPulse_NAME = m.DealerPulse_NAME\n\
-    ORDER BY t.avg_repair_hours ASC;"
+  sql: "WITH service_agg AS (\n  SELECT \n    DealerPulse_NAME,\n    AVG(AVG_TURNAROUND_HOURS) as avg_repair_hours\n  FROM DealerPulse.INFORMATION_MART.VW_AVERAGE_REPAIR_TURNAROUND_TIME\n\
+    \  GROUP BY DealerPulse_NAME\n),\nlead_agg AS (\n  SELECT \n    DealerPulse_NAME,\n    AVG(AVG_ORDER_LEAD_TIME_DAYS) as avg_lead_time_days\n\
+    \  FROM DealerPulse.INFORMATION_MART.VW_ORDER_LEAD_TIME\n  GROUP BY DealerPulse_NAME\n),\nrevenue_agg AS (\n  SELECT \n    DealerPulse_NAME,\n\
+    \    SUM(TOTAL_REVENUE) as total_revenue\n  FROM DealerPulse.INFORMATION_MART.VW_SALES_PER_PRODUCT_CATEGORY\n  GROUP BY DealerPulse_NAME\n\
+    ),\nmargin_agg AS (\n  SELECT \n    DealerPulse_NAME,\n    AVG(GROSS_PROFIT_MARGIN_PCT) as avg_gross_profit_margin_pct\n  FROM\
+    \ DealerPulse.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN\n  GROUP BY DealerPulse_NAME\n)\nSELECT\n  t.DealerPulse_NAME,\n  ROUND(t.avg_repair_hours,\
+    \ 1) as avg_repair_hours,\n  ROUND(l.avg_lead_time_days, 1) as avg_lead_time_days,\n  r.total_revenue,\n  ROUND(m.avg_gross_profit_margin_pct,\
+    \ 2) as GROSS_PROFIT_MARGIN_PCT\nFROM service_agg t\nLEFT JOIN lead_agg l ON t.DealerPulse_NAME = l.DealerPulse_NAME\nLEFT JOIN\
+    \ revenue_agg r ON t.DealerPulse_NAME = r.DealerPulse_NAME\nLEFT JOIN margin_agg m ON t.DealerPulse_NAME = m.DealerPulse_NAME\nORDER BY t.avg_repair_hours\
+    \ ASC;"
 - name: DealerPulse_sales_by_category
   question: Show sales by product category. What is the revenue mix for each DealerPulse?
-  sql: "SELECT\n  DealerPulse_NAME,\n  PRODUCT_CATEGORY,\n  TOTAL_REVENUE,\n  TOTAL_QUANTITY,\n  ROUND(100.0 * TOTAL_REVENUE\
-    \ / SUM(TOTAL_REVENUE) OVER (PARTITION BY DealerPulse_NAME), 1) as revenue_share_pct\nFROM DealerPulse.INFORMATION_MART.VW_SALES_PER_PRODUCT_CATEGORY\n\
+  sql: "SELECT\n  DealerPulse_NAME,\n  PRODUCT_CATEGORY,\n  TOTAL_REVENUE,\n  TOTAL_QUANTITY,\n  ROUND(100.0 * TOTAL_REVENUE /\
+    \ SUM(TOTAL_REVENUE) OVER (PARTITION BY DealerPulse_NAME), 1) as revenue_share_pct\nFROM DealerPulse.INFORMATION_MART.VW_SALES_PER_PRODUCT_CATEGORY\n\
     ORDER BY DealerPulse_NAME, TOTAL_REVENUE DESC"
 - name: declining_product_categories
   question: Which categories show declining sales? Which product categories are declining? What categories need corrective
@@ -1898,43 +1879,41 @@ verified_queries:
   prescriptive_guidance: 'DECLINING_CRITICAL categories losing >20% revenue need immediate action: pricing review, promotional
     strategy, or discontinuation analysis. Show exact revenue loss and affected DealerPulses.'
   sql: "WITH category_metrics AS (\n  SELECT \n    PRODUCT_CATEGORY,\n    SUM(COALESCE(TOTAL_REVENUE, 0)) AS total_revenue,\n\
-    \    SUM(COALESCE(TOTAL_QUANTITY, 0)) AS total_quantity,\n    COUNT(DISTINCT DealerPulse_NAME) AS num_DealerPulses,\n\
-    \    COUNT(*) AS sample_count,\n    CASE \n      WHEN COUNT(*) > 0 THEN ROUND(SUM(COALESCE(TOTAL_REVENUE, 0))::FLOAT /\
-    \ COUNT(*), 2)\n      ELSE 0\n    END AS avg_monthly_revenue\n  FROM DealerPulse.INFORMATION_MART.VW_SALES_PER_PRODUCT_CATEGORY\n\
-    \  WHERE PRODUCT_CATEGORY IS NOT NULL AND TOTAL_REVENUE IS NOT NULL\n  GROUP BY PRODUCT_CATEGORY\n),\ncategory_stats AS\
-    \ (\n  SELECT \n    *,\n    AVG(total_revenue) OVER () AS company_avg_category_revenue\n  FROM category_metrics\n)\nSELECT\
-    \ \n  PRODUCT_CATEGORY,\n  total_revenue,\n  total_quantity,\n  num_DealerPulses,\n  ROUND(avg_monthly_revenue, 2) AS\
-    \ avg_monthly_revenue,\n  ROUND(100.0 * total_revenue / SUM(total_revenue) OVER (), 2) AS category_share_pct,\n  CASE\
-    \ \n    WHEN total_revenue < company_avg_category_revenue * 0.8 AND sample_count > 3 THEN 'DECLINING_CRITICAL'\n    WHEN\
-    \ total_revenue < company_avg_category_revenue * 0.95 AND sample_count > 2 THEN 'DECLINING'\n    WHEN total_revenue BETWEEN\
-    \ company_avg_category_revenue * 0.95 AND company_avg_category_revenue * 1.05 THEN 'FLAT'\n    ELSE 'GROWING'\n  END AS\
-    \ revenue_trend,\n  CASE \n    WHEN total_revenue < company_avg_category_revenue * 0.8 THEN 'URGENT - Review pricing,\
-    \ promotion, or discontinue'\n    WHEN total_revenue < company_avg_category_revenue * 0.95 THEN 'ACTION NEEDED - Develop\
-    \ recovery plan'\n    WHEN total_revenue BETWEEN company_avg_category_revenue * 0.95 AND company_avg_category_revenue\
-    \ * 1.05 THEN 'MONITOR - Track for trends'\n    ELSE 'MAINTAIN - Strong performance'\n  END AS corrective_action\nFROM\
-    \ category_stats\nWHERE total_revenue < company_avg_category_revenue * 1.05\nORDER BY total_revenue DESC;"
+    \    SUM(COALESCE(TOTAL_QUANTITY, 0)) AS total_quantity,\n    COUNT(DISTINCT DealerPulse_NAME) AS num_DealerPulses,\n    COUNT(*)\
+    \ AS sample_count,\n    CASE \n      WHEN COUNT(*) > 0 THEN ROUND(SUM(COALESCE(TOTAL_REVENUE, 0))::FLOAT / COUNT(*), 2)\n\
+    \      ELSE 0\n    END AS avg_monthly_revenue\n  FROM DealerPulse.INFORMATION_MART.VW_SALES_PER_PRODUCT_CATEGORY\n  WHERE PRODUCT_CATEGORY\
+    \ IS NOT NULL AND TOTAL_REVENUE IS NOT NULL\n  GROUP BY PRODUCT_CATEGORY\n),\ncategory_stats AS (\n  SELECT \n    *,\n\
+    \    AVG(total_revenue) OVER () AS company_avg_category_revenue\n  FROM category_metrics\n)\nSELECT \n  PRODUCT_CATEGORY,\n\
+    \  total_revenue,\n  total_quantity,\n  num_DealerPulses,\n  ROUND(avg_monthly_revenue, 2) AS avg_monthly_revenue,\n  ROUND(100.0\
+    \ * total_revenue / SUM(total_revenue) OVER (), 2) AS category_share_pct,\n  CASE \n    WHEN total_revenue < company_avg_category_revenue\
+    \ * 0.8 AND sample_count > 3 THEN 'DECLINING_CRITICAL'\n    WHEN total_revenue < company_avg_category_revenue * 0.95 AND\
+    \ sample_count > 2 THEN 'DECLINING'\n    WHEN total_revenue BETWEEN company_avg_category_revenue * 0.95 AND company_avg_category_revenue\
+    \ * 1.05 THEN 'FLAT'\n    ELSE 'GROWING'\n  END AS revenue_trend,\n  CASE \n    WHEN total_revenue < company_avg_category_revenue\
+    \ * 0.8 THEN 'URGENT - Review pricing, promotion, or discontinue'\n    WHEN total_revenue < company_avg_category_revenue\
+    \ * 0.95 THEN 'ACTION NEEDED - Develop recovery plan'\n    WHEN total_revenue BETWEEN company_avg_category_revenue * 0.95\
+    \ AND company_avg_category_revenue * 1.05 THEN 'MONITOR - Track for trends'\n    ELSE 'MAINTAIN - Strong performance'\n\
+    \  END AS corrective_action\nFROM category_stats\nWHERE total_revenue < company_avg_category_revenue * 1.05\nORDER BY\
+    \ total_revenue DESC;"
 - name: DealerPulse_sales_volume_trend
   question: What are the sales volume trends by DealerPulse year-over-year?
-  sql: "SELECT\n  DealerPulse_NAME,\n  PERIOD_YEAR,\n  UNITS_SOLD,\n  LAG(UNITS_SOLD) OVER (PARTITION BY DealerPulse_NAME\
-    \ ORDER BY PERIOD_YEAR) as prev_year_units,\n  ROUND(UNITS_SOLD - LAG(UNITS_SOLD) OVER (PARTITION BY DealerPulse_NAME\
-    \ ORDER BY PERIOD_YEAR), 0) as yoy_change\nFROM DealerPulse.INFORMATION_MART.VW_SALES_VOLUME\nORDER BY PERIOD_YEAR DESC,\
-    \ UNITS_SOLD DESC"
+  sql: "SELECT\n  DealerPulse_NAME,\n  PERIOD_YEAR,\n  UNITS_SOLD,\n  LAG(UNITS_SOLD) OVER (PARTITION BY DealerPulse_NAME ORDER BY PERIOD_YEAR)\
+    \ as prev_year_units,\n  ROUND(UNITS_SOLD - LAG(UNITS_SOLD) OVER (PARTITION BY DealerPulse_NAME ORDER BY PERIOD_YEAR), 0) as\
+    \ yoy_change\nFROM DealerPulse.INFORMATION_MART.VW_SALES_VOLUME\nORDER BY PERIOD_YEAR DESC, UNITS_SOLD DESC"
 - name: DealerPulse_cost_reduction_opportunities
   question: Suggest ways to improve DealerPulse profitability based on current metrics.
   sql: "WITH bottom_10_DealerPulses AS (\n  SELECT DealerPulse_NAME, GROSS_PROFIT_MARGIN_PCT\n  FROM DealerPulse.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN\n\
-    \  ORDER BY GROSS_PROFIT_MARGIN_PCT ASC\n  LIMIT 10\n)\nSELECT\n  b.DealerPulse_NAME,\n  b.GROSS_PROFIT_MARGIN_PCT,\n\
-    \  CASE\n    WHEN b.GROSS_PROFIT_MARGIN_PCT < 15 THEN '1_Improve_Margins - Margin below 15%'\n    WHEN cc.CCC > 60 THEN\
-    \ '2_Optimize_CCC - CCC above 60 days'\n    WHEN cc.DIO > 45 THEN '3_Reduce_Inventory - High inventory days'\n    WHEN\
-    \ bo.BACKORDER_INCIDENCE_PCT > 15 THEN '4_Improve_Availability - High backorder rate'\n    WHEN l.AVG_ORDER_LEAD_TIME_DAYS\
-    \ > 7 THEN '5_Speed_Delivery - Long lead times'\n    ELSE '6_Maintain_Performance'\n  END as PRIMARY_OPPORTUNITY,\n  CASE\
-    \ \n      WHEN b.GROSS_PROFIT_MARGIN_PCT < 15 THEN 'Review pricing strategy and reduce COGS'\n      WHEN cc.CCC > 60 THEN\
-    \ 'Accelerate collections (DSO) and negotiate better payment terms'\n      WHEN cc.DIO > 45 THEN 'Optimize stock levels\
-    \ and reduce holding costs'\n      WHEN bo.BACKORDER_INCIDENCE_PCT > 15 THEN 'Improve demand forecasting and supplier\
-    \ coordination'\n      WHEN l.AVG_ORDER_LEAD_TIME_DAYS > 7 THEN 'Optimize order fulfillment and logistics'\n      ELSE\
-    \ 'Continue current strategy'\n    END as RECOMMENDED_ACTION\n  FROM bottom_10_DealerPulses b\n  LEFT JOIN DealerPulse.INFORMATION_MART.VW_CASH_CONVERSION_CYCLE\
-    \ cc\n    ON b.DealerPulse_NAME = cc.DealerPulse_NAME\n  LEFT JOIN DealerPulse.INFORMATION_MART.VW_BACKORDER_INCIDENCE\
-    \ bo\n    ON b.DealerPulse_NAME = bo.DealerPulse_NAME\n  LEFT JOIN DealerPulse.INFORMATION_MART.VW_ORDER_LEAD_TIME l\n\
-    \    ON b.DealerPulse_NAME = l.DealerPulse_NAME\n  ORDER BY b.GROSS_PROFIT_MARGIN_PCT ASC;"
+    \  ORDER BY GROSS_PROFIT_MARGIN_PCT ASC\n  LIMIT 10\n)\nSELECT\n  b.DealerPulse_NAME,\n  b.GROSS_PROFIT_MARGIN_PCT,\n  CASE\n\
+    \    WHEN b.GROSS_PROFIT_MARGIN_PCT < 15 THEN '1_Improve_Margins - Margin below 15%'\n    WHEN cc.CCC > 60 THEN '2_Optimize_CCC\
+    \ - CCC above 60 days'\n    WHEN cc.DIO > 45 THEN '3_Reduce_Inventory - High inventory days'\n    WHEN bo.BACKORDER_INCIDENCE_PCT\
+    \ > 15 THEN '4_Improve_Availability - High backorder rate'\n    WHEN l.AVG_ORDER_LEAD_TIME_DAYS > 7 THEN '5_Speed_Delivery\
+    \ - Long lead times'\n    ELSE '6_Maintain_Performance'\n  END as PRIMARY_OPPORTUNITY,\n  CASE \n      WHEN b.GROSS_PROFIT_MARGIN_PCT\
+    \ < 15 THEN 'Review pricing strategy and reduce COGS'\n      WHEN cc.CCC > 60 THEN 'Accelerate collections (DSO) and negotiate\
+    \ better payment terms'\n      WHEN cc.DIO > 45 THEN 'Optimize stock levels and reduce holding costs'\n      WHEN bo.BACKORDER_INCIDENCE_PCT\
+    \ > 15 THEN 'Improve demand forecasting and supplier coordination'\n      WHEN l.AVG_ORDER_LEAD_TIME_DAYS > 7 THEN 'Optimize\
+    \ order fulfillment and logistics'\n      ELSE 'Continue current strategy'\n    END as RECOMMENDED_ACTION\n  FROM bottom_10_DealerPulses\
+    \ b\n  LEFT JOIN DealerPulse.INFORMATION_MART.VW_CASH_CONVERSION_CYCLE cc\n    ON b.DealerPulse_NAME = cc.DealerPulse_NAME\n  LEFT JOIN\
+    \ DealerPulse.INFORMATION_MART.VW_BACKORDER_INCIDENCE bo\n    ON b.DealerPulse_NAME = bo.DealerPulse_NAME\n  LEFT JOIN DealerPulse.INFORMATION_MART.VW_ORDER_LEAD_TIME\
+    \ l\n    ON b.DealerPulse_NAME = l.DealerPulse_NAME\n  ORDER BY b.GROSS_PROFIT_MARGIN_PCT ASC;"
 - name: lead_time_analysis_2026
   question: What is the average order lead time?
   use_as_onboarding_question: true
@@ -1942,8 +1921,7 @@ verified_queries:
     \  FROM DealerPulse.INFORMATION_MART.VW_ORDER_LEAD_TIME\n  WHERE AVG_ORDER_LEAD_TIME_DAYS IS NOT NULL\n  GROUP BY DealerPulse_NAME\n\
     )\nSELECT \n  l.DealerPulse_NAME,\n  l.AVG_LEAD_TIME_DAYS\nFROM avg_lead l\nORDER BY l.AVG_LEAD_TIME_DAYS DESC;"
 - name: top_5_DealerPulses_by_revenue
-  question: Who are my top 5 DealerPulses? List all the top 5 DealerPulses. Show the top 5 DealerPulses by revenue. What are
-    my top DealerPulses?
+  question: Who are my top 5 DealerPulses? List all the top 5 DealerPulses. Show the top 5 DealerPulses by revenue. What are my top DealerPulses?
   use_as_onboarding_question: true
   expected_columns:
   - 'DealerPulse_NAME: Top DealerPulse name'
@@ -1953,53 +1931,50 @@ verified_queries:
   - 'rank: 1-5 ranking by revenue'
   expected_row_count: Exactly 5 DealerPulses (top 5 only)
   sort_order: By TOTAL_REVENUE descending (highest revenue first)
-  visual_recommendation: Bar chart showing top 5 DealerPulses ranked 1-5; color bars red if margin <15%, yellow if 15-20%,
-    green if >20%
-  prescriptive_guidance: Show top DealerPulses dominate company revenue; flag if any top DealerPulse has margin <15% (critical
-    issue); cite exact revenue % and margin
-  sql: "SELECT \n  DealerPulse_NAME,\n  TOTAL_REVENUE,\n  ROUND(100.0 * TOTAL_REVENUE / SUM(TOTAL_REVENUE) OVER (), 2) as\
-    \ revenue_share_pct,\n  GROSS_PROFIT_MARGIN_PCT,\n  ROW_NUMBER() OVER (ORDER BY TOTAL_REVENUE DESC) as rank\nFROM DealerPulse.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN\n\
+  visual_recommendation: Bar chart showing top 5 DealerPulses ranked 1-5; color bars red if margin <15%, yellow if 15-20%, green
+    if >20%
+  prescriptive_guidance: Show top DealerPulses dominate company revenue; flag if any top DealerPulse has margin <15% (critical issue);
+    cite exact revenue % and margin
+  sql: "SELECT \n  DealerPulse_NAME,\n  TOTAL_REVENUE,\n  ROUND(100.0 * TOTAL_REVENUE / SUM(TOTAL_REVENUE) OVER (), 2) as revenue_share_pct,\n\
+    \  GROSS_PROFIT_MARGIN_PCT,\n  ROW_NUMBER() OVER (ORDER BY TOTAL_REVENUE DESC) as rank\nFROM DealerPulse.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN\n\
     WHERE TOTAL_REVENUE IS NOT NULL\nQUALIFY rank <= 5\nORDER BY TOTAL_REVENUE DESC;"
 - name: top_5_DealerPulses_by_profitability
   question: Top 5 most profitable DealerPulses. Which DealerPulses are most profitable? Show top DealerPulses by profit.
-  sql: "SELECT \n  DealerPulse_NAME,\n  GROSS_PROFIT_MARGIN_PCT,\n  TOTAL_REVENUE,\n  TOTAL_COGS,\n  ROUND(TOTAL_REVENUE *\
-    \ GROSS_PROFIT_MARGIN_PCT / 100, 2) as gross_profit_amount,\n  ROW_NUMBER() OVER (ORDER BY GROSS_PROFIT_MARGIN_PCT DESC)\
-    \ as rank\nFROM DealerPulse.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN\nWHERE GROSS_PROFIT_MARGIN_PCT IS NOT NULL\nQUALIFY\
-    \ rank <= 5\nORDER BY GROSS_PROFIT_MARGIN_PCT DESC;"
+  sql: "SELECT \n  DealerPulse_NAME,\n  GROSS_PROFIT_MARGIN_PCT,\n  TOTAL_REVENUE,\n  TOTAL_COGS,\n  ROUND(TOTAL_REVENUE * GROSS_PROFIT_MARGIN_PCT\
+    \ / 100, 2) as gross_profit_amount,\n  ROW_NUMBER() OVER (ORDER BY GROSS_PROFIT_MARGIN_PCT DESC) as rank\nFROM DealerPulse.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN\n\
+    WHERE GROSS_PROFIT_MARGIN_PCT IS NOT NULL\nQUALIFY rank <= 5\nORDER BY GROSS_PROFIT_MARGIN_PCT DESC;"
 - name: top_5_DealerPulses_by_growth
-  question: Top 5 fastest growing DealerPulses. Which DealerPulses have the highest growth? Show top DealerPulses by growth
-    rate.
-  sql: "SELECT \n  DealerPulse_NAME,\n  REVENUE_GROWTH_MOM_PERCENT,\n  REVENUE,\n  PREV_MONTH_REVENUE,\n  PERIOD_YEAR,\n \
-    \ ROW_NUMBER() OVER (ORDER BY REVENUE_GROWTH_MOM_PERCENT DESC) as rank\nFROM DealerPulse.INFORMATION_MART.VW_DealerPulse_REVENUE_GROWTH\n\
-    WHERE REVENUE_GROWTH_MOM_PERCENT IS NOT NULL\nQUALIFY rank <= 5\nORDER BY REVENUE_GROWTH_MOM_PERCENT DESC;"
+  question: Top 5 fastest growing DealerPulses. Which DealerPulses have the highest growth? Show top DealerPulses by growth rate.
+  sql: "SELECT \n  DealerPulse_NAME,\n  REVENUE_GROWTH_MOM_PERCENT,\n  REVENUE,\n  PREV_MONTH_REVENUE,\n  PERIOD_YEAR,\n  ROW_NUMBER()\
+    \ OVER (ORDER BY REVENUE_GROWTH_MOM_PERCENT DESC) as rank\nFROM DealerPulse.INFORMATION_MART.VW_DealerPulse_REVENUE_GROWTH\nWHERE\
+    \ REVENUE_GROWTH_MOM_PERCENT IS NOT NULL\nQUALIFY rank <= 5\nORDER BY REVENUE_GROWTH_MOM_PERCENT DESC;"
 - name: DealerPulses_losing_money
-  question: Which DealerPulses are losing money? Which DealerPulses are unprofitable? Show DealerPulses with low profit. Who
-    is making the least profit?
-  sql: "SELECT \n  DealerPulse_NAME,\n  GROSS_PROFIT_MARGIN_PCT,\n  TOTAL_REVENUE,\n  TOTAL_COGS,\n  ROUND(TOTAL_REVENUE *\
-    \ GROSS_PROFIT_MARGIN_PCT / 100, 2) as gross_profit_amount,\n  CASE \n    WHEN GROSS_PROFIT_MARGIN_PCT < 10 THEN 'CRITICAL\
-    \ - Very Low Profit'\n    WHEN GROSS_PROFIT_MARGIN_PCT < 15 THEN 'WARNING - Below Average'\n    ELSE 'OK'\n  END as profit_health\n\
-    FROM DealerPulse.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN\nWHERE GROSS_PROFIT_MARGIN_PCT IS NOT NULL\nORDER BY GROSS_PROFIT_MARGIN_PCT\
-    \ ASC;"
+  question: Which DealerPulses are losing money? Which DealerPulses are unprofitable? Show DealerPulses with low profit. Who is making the
+    least profit?
+  sql: "SELECT \n  DealerPulse_NAME,\n  GROSS_PROFIT_MARGIN_PCT,\n  TOTAL_REVENUE,\n  TOTAL_COGS,\n  ROUND(TOTAL_REVENUE * GROSS_PROFIT_MARGIN_PCT\
+    \ / 100, 2) as gross_profit_amount,\n  CASE \n    WHEN GROSS_PROFIT_MARGIN_PCT < 10 THEN 'CRITICAL - Very Low Profit'\n\
+    \    WHEN GROSS_PROFIT_MARGIN_PCT < 15 THEN 'WARNING - Below Average'\n    ELSE 'OK'\n  END as profit_health\nFROM DealerPulse.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN\n\
+    WHERE GROSS_PROFIT_MARGIN_PCT IS NOT NULL\nORDER BY GROSS_PROFIT_MARGIN_PCT ASC;"
 - name: sales_comparison
-  question: Compare DealerPulse sales. Show me sales by DealerPulse. Which DealerPulse makes the most sales? Who has the highest
-    sales? Sales comparison.
-  sql: "SELECT \n  DealerPulse_NAME,\n  ROUND(TOTAL_REVENUE, 2) as total_sales,\n  ROUND(TOTAL_REVENUE / SUM(TOTAL_REVENUE)\
-    \ OVER () * 100, 2) as sales_percentage,\n  ROUND((TOTAL_REVENUE - LAG(TOTAL_REVENUE) OVER (ORDER BY TOTAL_REVENUE DESC))\
-    \ / LAG(TOTAL_REVENUE) OVER (ORDER BY TOTAL_REVENUE DESC) * 100, 2) as vs_next_DealerPulse_pct\nFROM DealerPulse.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN\n\
+  question: Compare DealerPulse sales. Show me sales by DealerPulse. Which DealerPulse makes the most sales? Who has the highest sales? Sales
+    comparison.
+  sql: "SELECT \n  DealerPulse_NAME,\n  ROUND(TOTAL_REVENUE, 2) as total_sales,\n  ROUND(TOTAL_REVENUE / SUM(TOTAL_REVENUE) OVER\
+    \ () * 100, 2) as sales_percentage,\n  ROUND((TOTAL_REVENUE - LAG(TOTAL_REVENUE) OVER (ORDER BY TOTAL_REVENUE DESC)) /\
+    \ LAG(TOTAL_REVENUE) OVER (ORDER BY TOTAL_REVENUE DESC) * 100, 2) as vs_next_DealerPulse_pct\nFROM DealerPulse.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN\n\
     WHERE TOTAL_REVENUE IS NOT NULL\nORDER BY TOTAL_REVENUE DESC;"
 - name: DealerPulse_costs
-  question: What are DealerPulse costs? Show me cost breakdown. What is each DealerPulse spending? Who has the highest costs?
-    Cost analysis by DealerPulse.
+  question: What are DealerPulse costs? Show me cost breakdown. What is each DealerPulse spending? Who has the highest costs? Cost analysis
+    by DealerPulse.
   sql: "SELECT \n  DealerPulse_NAME,\n  ROUND(TOTAL_REVENUE, 2) as sales,\n  ROUND(TOTAL_COGS, 2) as costs,\n  ROUND(TOTAL_REVENUE\
     \ - TOTAL_COGS, 2) as gross_profit,\n  GROSS_PROFIT_MARGIN_PCT as profit_margin_pct,\n  ROUND(100.0 * TOTAL_COGS / TOTAL_REVENUE,\
     \ 2) as cost_percent_of_sales\nFROM DealerPulse.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN\nWHERE TOTAL_REVENUE IS NOT NULL\n\
     ORDER BY TOTAL_COGS DESC;"
 - name: DealerPulse_performance_summary
-  question: How are DealerPulses performing? Give me DealerPulse performance overview. Show DealerPulse performance comparison.
-    Performance summary.
+  question: How are DealerPulses performing? Give me DealerPulse performance overview. Show DealerPulse performance comparison. Performance
+    summary.
   sql: "WITH growth_agg AS (\n  SELECT\n    r.DealerPulse_NAME,\n    AVG(r.REVENUE_GROWTH_MOM_PERCENT) AS avg_growth_rate_pct\n\
-    \  FROM DealerPulse.INFORMATION_MART.VW_DealerPulse_REVENUE_GROWTH r\n  WHERE r.REVENUE_GROWTH_MOM_PERCENT IS NOT NULL\n\
-    \  GROUP BY r.DealerPulse_NAME\n)\nSELECT \n  g.DealerPulse_NAME,\n  ROUND(g.TOTAL_REVENUE, 0) as total_sales,\n  g.GROSS_PROFIT_MARGIN_PCT\
+    \  FROM DealerPulse.INFORMATION_MART.VW_DealerPulse_REVENUE_GROWTH r\n  WHERE r.REVENUE_GROWTH_MOM_PERCENT IS NOT NULL\n  GROUP\
+    \ BY r.DealerPulse_NAME\n)\nSELECT \n  g.DealerPulse_NAME,\n  ROUND(g.TOTAL_REVENUE, 0) as total_sales,\n  g.GROSS_PROFIT_MARGIN_PCT\
     \ as profit_margin_pct,\n  ga.avg_growth_rate_pct as growth_rate_pct,\n  CASE \n    WHEN g.GROSS_PROFIT_MARGIN_PCT >=\
     \ 20 AND COALESCE(ga.avg_growth_rate_pct, 0) > 5 THEN 'EXCELLENT - Growing & Profitable'\n    WHEN g.GROSS_PROFIT_MARGIN_PCT\
     \ >= 15 THEN 'GOOD - Healthy Margins'\n    WHEN g.GROSS_PROFIT_MARGIN_PCT < 15 AND COALESCE(ga.avg_growth_rate_pct, 0)\
@@ -2007,8 +1982,8 @@ verified_queries:
     \    ELSE 'FAIR'\n  END as performance_status\nFROM DealerPulse.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN g\nLEFT JOIN growth_agg\
     \ ga\n  ON g.DealerPulse_NAME = ga.DealerPulse_NAME\nORDER BY g.GROSS_PROFIT_MARGIN_PCT DESC;"
 - name: DealerPulse_health_scorecard
-  question: Tell me about DealerPulse health. What is the DealerPulse health status? Show DealerPulse health. DealerPulse
-    health check. Overall DealerPulse health.
+  question: Tell me about DealerPulse health. What is the DealerPulse health status? Show DealerPulse health. DealerPulse health check. Overall
+    DealerPulse health.
   use_as_onboarding_question: true
   expected_columns:
   - 'DealerPulse_NAME: DealerPulse identifier'
@@ -2021,28 +1996,27 @@ verified_queries:
   expected_row_count: All DealerPulses with comprehensive health metrics
   sort_order: By OVERALL_HEALTH_SCORE descending (healthiest first)
   visual_recommendation: 'Health dashboard with color-coded scorecard: RED=CRITICAL, ORANGE=WARNING, YELLOW=FAIR, GREEN=GOOD/EXCELLENT'
-  prescriptive_guidance: Flag DealerPulses with CRITICAL status in any dimension; provide specific actions for each failing
-    metric; benchmark against company averages
+  prescriptive_guidance: Flag DealerPulses with CRITICAL status in any dimension; provide specific actions for each failing metric;
+    benchmark against company averages
   sql: "WITH profitability AS (\n  SELECT \n    DealerPulse_NAME,\n    GROSS_PROFIT_MARGIN_PCT,\n    CASE \n      WHEN GROSS_PROFIT_MARGIN_PCT\
     \ >= 20 THEN 'EXCELLENT'\n      WHEN GROSS_PROFIT_MARGIN_PCT >= 15 THEN 'GOOD'\n      WHEN GROSS_PROFIT_MARGIN_PCT >=\
     \ 10 THEN 'WARNING'\n      ELSE 'CRITICAL'\n    END as profit_status\n  FROM DealerPulse.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN\n\
-    ),\ngrowth_trend AS (\n  SELECT \n    DealerPulse_NAME,\n    AVG(REVENUE_GROWTH_MOM_PERCENT) as avg_growth,\n    CASE\
-    \ \n      WHEN AVG(REVENUE_GROWTH_MOM_PERCENT) > 10 THEN 'STRONG'\n      WHEN AVG(REVENUE_GROWTH_MOM_PERCENT) > 5 THEN\
-    \ 'GROWING'\n      WHEN AVG(REVENUE_GROWTH_MOM_PERCENT) > 0 THEN 'STABLE'\n      WHEN AVG(REVENUE_GROWTH_MOM_PERCENT)\
-    \ > -5 THEN 'DECLINING'\n      ELSE 'CRITICAL'\n    END as revenue_status\n  FROM DealerPulse.INFORMATION_MART.VW_DealerPulse_REVENUE_GROWTH\n\
-    \  WHERE REVENUE_GROWTH_MOM_PERCENT IS NOT NULL\n  GROUP BY DealerPulse_NAME\n),\noperational_eff AS (\n  SELECT \n  \
-    \  DealerPulse_NAME,\n    AVG(AVG_TURNAROUND_HOURS) as avg_turnaround,\n    CASE \n      WHEN AVG(AVG_TURNAROUND_HOURS)\
-    \ <= 24 THEN 'EXCELLENT'\n      WHEN AVG(AVG_TURNAROUND_HOURS) <= 48 THEN 'GOOD'\n      WHEN AVG(AVG_TURNAROUND_HOURS)\
-    \ <= 72 THEN 'FAIR'\n      ELSE 'CRITICAL'\n    END as efficiency_status\n  FROM DealerPulse.INFORMATION_MART.VW_AVERAGE_REPAIR_TURNAROUND_TIME\n\
-    \  WHERE AVG_TURNAROUND_HOURS IS NOT NULL\n  GROUP BY DealerPulse_NAME\n),\ninventory_status_agg AS (\n  SELECT \n   \
-    \ DealerPulse_NAME,\n    AVG(STOCK_AVAILABILITY_PCT) as avg_stock,\n    CASE \n      WHEN AVG(STOCK_AVAILABILITY_PCT)\
-    \ >= 95 THEN 'EXCELLENT'\n      WHEN AVG(STOCK_AVAILABILITY_PCT) >= 85 THEN 'GOOD'\n      WHEN AVG(STOCK_AVAILABILITY_PCT)\
-    \ >= 75 THEN 'WARNING'\n      ELSE 'CRITICAL'\n    END as inventory_status\n  FROM DealerPulse.INFORMATION_MART.VW_STOCK_AVAILABILITY_DealerPulse\n\
-    \  WHERE STOCK_AVAILABILITY_PCT IS NOT NULL\n  GROUP BY DealerPulse_NAME\n),\ncash_status_agg AS (\n  SELECT \n    DealerPulse_NAME,\n\
-    \    CCC,\n    CASE \n      WHEN CCC < 30 THEN 'GOOD'\n      WHEN CCC < 45 THEN 'NORMAL'\n      WHEN CCC < 60 THEN 'WARNING'\n\
-    \      ELSE 'CRITICAL'\n    END as cash_health\n  FROM DealerPulse.INFORMATION_MART.VW_CASH_CONVERSION_CYCLE\n)\nSELECT\
-    \ \n  p.DealerPulse_NAME,\n  COALESCE(g.revenue_status, 'UNKNOWN') as REVENUE_STATUS,\n  COALESCE(p.profit_status, 'UNKNOWN')\
-    \ as PROFITABILITY,\n  COALESCE(o.efficiency_status, 'UNKNOWN') as OPERATIONAL_EFFICIENCY,\n  COALESCE(i.inventory_status,\
+    ),\ngrowth_trend AS (\n  SELECT \n    DealerPulse_NAME,\n    AVG(REVENUE_GROWTH_MOM_PERCENT) as avg_growth,\n    CASE \n  \
+    \    WHEN AVG(REVENUE_GROWTH_MOM_PERCENT) > 10 THEN 'STRONG'\n      WHEN AVG(REVENUE_GROWTH_MOM_PERCENT) > 5 THEN 'GROWING'\n\
+    \      WHEN AVG(REVENUE_GROWTH_MOM_PERCENT) > 0 THEN 'STABLE'\n      WHEN AVG(REVENUE_GROWTH_MOM_PERCENT) > -5 THEN 'DECLINING'\n\
+    \      ELSE 'CRITICAL'\n    END as revenue_status\n  FROM DealerPulse.INFORMATION_MART.VW_DealerPulse_REVENUE_GROWTH\n  WHERE REVENUE_GROWTH_MOM_PERCENT\
+    \ IS NOT NULL\n  GROUP BY DealerPulse_NAME\n),\noperational_eff AS (\n  SELECT \n    DealerPulse_NAME,\n    AVG(AVG_TURNAROUND_HOURS)\
+    \ as avg_turnaround,\n    CASE \n      WHEN AVG(AVG_TURNAROUND_HOURS) <= 24 THEN 'EXCELLENT'\n      WHEN AVG(AVG_TURNAROUND_HOURS)\
+    \ <= 48 THEN 'GOOD'\n      WHEN AVG(AVG_TURNAROUND_HOURS) <= 72 THEN 'FAIR'\n      ELSE 'CRITICAL'\n    END as efficiency_status\n\
+    \  FROM DealerPulse.INFORMATION_MART.VW_AVERAGE_REPAIR_TURNAROUND_TIME\n  WHERE AVG_TURNAROUND_HOURS IS NOT NULL\n  GROUP BY\
+    \ DealerPulse_NAME\n),\ninventory_status_agg AS (\n  SELECT \n    DealerPulse_NAME,\n    AVG(STOCK_AVAILABILITY_PCT) as avg_stock,\n\
+    \    CASE \n      WHEN AVG(STOCK_AVAILABILITY_PCT) >= 95 THEN 'EXCELLENT'\n      WHEN AVG(STOCK_AVAILABILITY_PCT) >= 85\
+    \ THEN 'GOOD'\n      WHEN AVG(STOCK_AVAILABILITY_PCT) >= 75 THEN 'WARNING'\n      ELSE 'CRITICAL'\n    END as inventory_status\n\
+    \  FROM DealerPulse.INFORMATION_MART.VW_STOCK_AVAILABILITY_DealerPulse\n  WHERE STOCK_AVAILABILITY_PCT IS NOT NULL\n  GROUP BY DealerPulse_NAME\n\
+    ),\ncash_status_agg AS (\n  SELECT \n    DealerPulse_NAME,\n    CCC,\n    CASE \n      WHEN CCC < 30 THEN 'GOOD'\n      WHEN\
+    \ CCC < 45 THEN 'NORMAL'\n      WHEN CCC < 60 THEN 'WARNING'\n      ELSE 'CRITICAL'\n    END as cash_health\n  FROM DealerPulse.INFORMATION_MART.VW_CASH_CONVERSION_CYCLE\n\
+    )\nSELECT \n  p.DealerPulse_NAME,\n  COALESCE(g.revenue_status, 'UNKNOWN') as REVENUE_STATUS,\n  COALESCE(p.profit_status,\
+    \ 'UNKNOWN') as PROFITABILITY,\n  COALESCE(o.efficiency_status, 'UNKNOWN') as OPERATIONAL_EFFICIENCY,\n  COALESCE(i.inventory_status,\
     \ 'UNKNOWN') as INVENTORY_HEALTH,\n  COALESCE(c.cash_health, 'UNKNOWN') as CASH_HEALTH,\n  CASE \n    WHEN COALESCE(g.revenue_status,\
     \ 'UNKNOWN') = 'CRITICAL' OR \n         COALESCE(p.profit_status, 'UNKNOWN') = 'CRITICAL' OR \n         COALESCE(o.efficiency_status,\
     \ 'UNKNOWN') = 'CRITICAL' OR\n         COALESCE(i.inventory_status, 'UNKNOWN') = 'CRITICAL' OR\n         COALESCE(c.cash_health,\
@@ -2050,12 +2024,11 @@ verified_queries:
     \ 'UNKNOWN') = 'WARNING' THEN 50\n    WHEN COALESCE(p.profit_status, 'UNKNOWN') = 'GOOD' AND \n         COALESCE(g.revenue_status,\
     \ 'UNKNOWN') IN ('STRONG', 'GROWING') THEN 85\n    WHEN COALESCE(p.profit_status, 'UNKNOWN') = 'EXCELLENT' THEN 90\n \
     \   ELSE 70\n  END as OVERALL_HEALTH_SCORE\nFROM profitability p\nLEFT JOIN growth_trend g ON p.DealerPulse_NAME = g.DealerPulse_NAME\n\
-    LEFT JOIN operational_eff o ON p.DealerPulse_NAME = o.DealerPulse_NAME\nLEFT JOIN inventory_status_agg i ON p.DealerPulse_NAME\
-    \ = i.DealerPulse_NAME\nLEFT JOIN cash_status_agg c ON p.DealerPulse_NAME = c.DealerPulse_NAME\nORDER BY OVERALL_HEALTH_SCORE\
-    \ DESC;"
+    LEFT JOIN operational_eff o ON p.DealerPulse_NAME = o.DealerPulse_NAME\nLEFT JOIN inventory_status_agg i ON p.DealerPulse_NAME = i.DealerPulse_NAME\n\
+    LEFT JOIN cash_status_agg c ON p.DealerPulse_NAME = c.DealerPulse_NAME\nORDER BY OVERALL_HEALTH_SCORE DESC;"
 - name: slow_DealerPulses
-  question: Which DealerPulses are slow? Show me DealerPulse delivery times. Who has the longest lead time? Which DealerPulses
-    are taking too long? Lead time comparison.
+  question: Which DealerPulses are slow? Show me DealerPulse delivery times. Who has the longest lead time? Which DealerPulses are taking
+    too long? Lead time comparison.
   sql: "SELECT\n  DealerPulse_NAME,\n  ROUND(AVG(AVG_ORDER_LEAD_TIME_DAYS), 1) as avg_lead_time_days,\n  MIN(AVG_ORDER_LEAD_TIME_DAYS)\
     \ as fastest_delivery_days,\n  MAX(AVG_ORDER_LEAD_TIME_DAYS) as slowest_delivery_days,\n  CASE\n    WHEN AVG(AVG_ORDER_LEAD_TIME_DAYS)\
     \ > 14 THEN 'SLOW - More than 2 weeks'\n    WHEN AVG(AVG_ORDER_LEAD_TIME_DAYS) > 7 THEN 'MEDIUM - 1-2 weeks'\n    WHEN\
@@ -2064,27 +2037,27 @@ verified_queries:
 - name: DealerPulse_inventory_issues
   question: Which DealerPulses have inventory problems? Show me stock issues. Who has out of stock problems? Inventory shortage
     analysis.
-  sql: "WITH stock_agg AS (\n  SELECT \n    DealerPulse_NAME,\n    AVG(STOCK_AVAILABILITY_PCT) as avg_availability_pct\n \
-    \ FROM DealerPulse.INFORMATION_MART.VW_STOCK_AVAILABILITY_DealerPulse\n  GROUP BY DealerPulse_NAME\n),\nbackorder_agg\
-    \ AS (\n  SELECT \n    DealerPulse_NAME,\n    AVG(BACKORDER_INCIDENCE_PCT) as avg_backorder_rate\n  FROM DealerPulse.INFORMATION_MART.VW_BACKORDER_INCIDENCE\n\
-    \  GROUP BY DealerPulse_NAME\n)\nSELECT \n  s.DealerPulse_NAME,\n  ROUND(s.avg_availability_pct, 1) as avg_availability_pct,\n\
-    \  ROUND(COALESCE(b.avg_backorder_rate, 0), 1) as BACKORDER_INCIDENCE_PCT,\n  CASE \n    WHEN s.avg_availability_pct <\
+  sql: "WITH stock_agg AS (\n  SELECT \n    DealerPulse_NAME,\n    AVG(STOCK_AVAILABILITY_PCT) as avg_availability_pct\n  FROM\
+    \ DealerPulse.INFORMATION_MART.VW_STOCK_AVAILABILITY_DealerPulse\n  GROUP BY DealerPulse_NAME\n),\nbackorder_agg AS (\n  SELECT \n  \
+    \  DealerPulse_NAME,\n    AVG(BACKORDER_INCIDENCE_PCT) as avg_backorder_rate\n  FROM DealerPulse.INFORMATION_MART.VW_BACKORDER_INCIDENCE\n\
+    \  GROUP BY DealerPulse_NAME\n)\nSELECT \n  s.DealerPulse_NAME,\n  ROUND(s.avg_availability_pct, 1) as avg_availability_pct,\n \
+    \ ROUND(COALESCE(b.avg_backorder_rate, 0), 1) as BACKORDER_INCIDENCE_PCT,\n  CASE \n    WHEN s.avg_availability_pct <\
     \ 80 AND COALESCE(b.avg_backorder_rate, 0) > 20 THEN 'CRITICAL - Severe Shortage'\n    WHEN s.avg_availability_pct < 85\
     \ THEN 'WARNING - Low Stock'\n    WHEN COALESCE(b.avg_backorder_rate, 0) > 15 THEN 'WARNING - Many Backorders'\n    WHEN\
     \ s.avg_availability_pct >= 95 THEN 'EXCELLENT - Well Stocked'\n    ELSE 'GOOD'\n  END as inventory_status\nFROM stock_agg\
     \ s\nLEFT JOIN backorder_agg b\n  ON s.DealerPulse_NAME = b.DealerPulse_NAME\nORDER BY s.avg_availability_pct ASC;"
 - name: increase_DealerPulse_profit_analysis
-  question: How can we increase DealerPulse profit? What strategies can improve DealerPulse profitability? Which DealerPulses
-    have profit improvement opportunities? How to boost DealerPulse earnings?
-  description: Analyzes DealerPulse profitability (contribution margin) against operational efficiency (repair turnaround
-    time). Shows which DealerPulses are high-margin but slow, or low-margin but fast. Identifies specific improvement opportunities.
+  question: How can we increase DealerPulse profit? What strategies can improve DealerPulse profitability? Which DealerPulses have profit
+    improvement opportunities? How to boost DealerPulse earnings?
+  description: Analyzes DealerPulse profitability (contribution margin) against operational efficiency (repair turnaround time).
+    Shows which DealerPulses are high-margin but slow, or low-margin but fast. Identifies specific improvement opportunities.
   sql: "WITH margin_data AS (\n  SELECT \n    DealerPulse_NAME,\n    ROUND(AVG(CONTRIBUTION_MARGIN_PCT), 2) as avg_contribution_margin_pct\n\
-    \  FROM DealerPulse.INFORMATION_MART.VW_DealerPulse_CONTRIBUTION_MARGIN\n  WHERE CONTRIBUTION_MARGIN_PCT IS NOT NULL\n\
-    \  GROUP BY DealerPulse_NAME\n),\nefficiency_data AS (\n  SELECT \n    DealerPulse_NAME,\n    ROUND(AVG(AVG_TURNAROUND_HOURS),\
-    \ 1) as avg_repair_hours,\n    CASE \n      WHEN AVG(AVG_TURNAROUND_HOURS) <= 24 THEN 'VERY_FAST'\n      WHEN AVG(AVG_TURNAROUND_HOURS)\
-    \ <= 48 THEN 'FAST'\n      WHEN AVG(AVG_TURNAROUND_HOURS) <= 72 THEN 'MODERATE'\n      ELSE 'SLOW'\n    END as efficiency_rating\n\
-    \  FROM DealerPulse.INFORMATION_MART.VW_AVERAGE_REPAIR_TURNAROUND_TIME\n  WHERE AVG_TURNAROUND_HOURS IS NOT NULL\n  GROUP\
-    \ BY DealerPulse_NAME\n)\nSELECT \n  m.DealerPulse_NAME,\n  m.avg_contribution_margin_pct,\n  e.avg_repair_hours,\n  e.efficiency_rating,\n\
+    \  FROM DealerPulse.INFORMATION_MART.VW_DealerPulse_CONTRIBUTION_MARGIN\n  WHERE CONTRIBUTION_MARGIN_PCT IS NOT NULL\n  GROUP BY\
+    \ DealerPulse_NAME\n),\nefficiency_data AS (\n  SELECT \n    DealerPulse_NAME,\n    ROUND(AVG(AVG_TURNAROUND_HOURS), 1) as avg_repair_hours,\n\
+    \    CASE \n      WHEN AVG(AVG_TURNAROUND_HOURS) <= 24 THEN 'VERY_FAST'\n      WHEN AVG(AVG_TURNAROUND_HOURS) <= 48 THEN\
+    \ 'FAST'\n      WHEN AVG(AVG_TURNAROUND_HOURS) <= 72 THEN 'MODERATE'\n      ELSE 'SLOW'\n    END as efficiency_rating\n\
+    \  FROM DealerPulse.INFORMATION_MART.VW_AVERAGE_REPAIR_TURNAROUND_TIME\n  WHERE AVG_TURNAROUND_HOURS IS NOT NULL\n  GROUP BY\
+    \ DealerPulse_NAME\n)\nSELECT \n  m.DealerPulse_NAME,\n  m.avg_contribution_margin_pct,\n  e.avg_repair_hours,\n  e.efficiency_rating,\n\
     \  CASE \n    WHEN m.avg_contribution_margin_pct >= 20 AND e.avg_repair_hours <= 48 THEN 'EXCELLENT - High Margin + Fast\
     \ Service'\n    WHEN m.avg_contribution_margin_pct >= 20 THEN 'OPPORTUNITY - High Margin, Slow Service → Speed up repairs'\n\
     \    WHEN m.avg_contribution_margin_pct < 15 AND e.avg_repair_hours <= 48 THEN 'OPPORTUNITY - Good Service, Low Margin\
@@ -2093,8 +2066,7 @@ verified_queries:
     FROM margin_data m\nLEFT JOIN efficiency_data e\n  ON m.DealerPulse_NAME = e.DealerPulse_NAME\nORDER BY m.avg_contribution_margin_pct\
     \ DESC, e.avg_repair_hours ASC;"
 - name: units_sold_by_DealerPulse
-  question: How many units were sold by each DealerPulse? Units sold per DealerPulse. Sales volume by DealerPulse. Total units
-    sold by DealerPulse.
+  question: How many units were sold by each DealerPulse? Units sold per DealerPulse. Sales volume by DealerPulse. Total units sold by DealerPulse.
   use_as_onboarding_question: false
   expected_columns:
   - 'DealerPulse_NAME: DealerPulse identifier'
@@ -2105,17 +2077,17 @@ verified_queries:
   sort_order: By TOTAL_UNITS_SOLD descending (highest volume first)
   visual_recommendation: Bar chart showing total units by DealerPulse
   prescriptive_guidance: Highlight top DealerPulses by volume; compare to DealerPulses with declining units
-  sql: "WITH units_agg AS (\n  SELECT \n    DealerPulse_NAME,\n    SUM(COALESCE(UNITS_SOLD, 0)) AS total_units_sold,\n   \
-    \ COUNT(DISTINCT PERIOD_YEAR) AS distinct_years,\n    COUNT(DISTINCT PERIOD_MONTH) AS distinct_months\n  FROM DealerPulse.INFORMATION_MART.VW_SALES_VOLUME\n\
-    \  WHERE UNITS_SOLD IS NOT NULL\n  GROUP BY DealerPulse_NAME\n)\nSELECT \n  DealerPulse_NAME,\n  TOTAL_UNITS_SOLD,\n \
-    \ ROUND(100.0 * TOTAL_UNITS_SOLD / SUM(TOTAL_UNITS_SOLD) OVER (), 2) AS units_share_pct,\n  CASE \n    WHEN distinct_months\
-    \ > 0 THEN ROUND(TOTAL_UNITS_SOLD::FLOAT / distinct_months, 1)\n    ELSE TOTAL_UNITS_SOLD\n  END AS avg_monthly_units\n\
-    FROM units_agg\nWHERE TOTAL_UNITS_SOLD > 0\nORDER BY TOTAL_UNITS_SOLD DESC;"
+  sql: "WITH units_agg AS (\n  SELECT \n    DealerPulse_NAME,\n    SUM(COALESCE(UNITS_SOLD, 0)) AS total_units_sold,\n    COUNT(DISTINCT\
+    \ PERIOD_YEAR) AS distinct_years,\n    COUNT(DISTINCT PERIOD_MONTH) AS distinct_months\n  FROM DealerPulse.INFORMATION_MART.VW_SALES_VOLUME\n\
+    \  WHERE UNITS_SOLD IS NOT NULL\n  GROUP BY DealerPulse_NAME\n)\nSELECT \n  DealerPulse_NAME,\n  TOTAL_UNITS_SOLD,\n  ROUND(100.0\
+    \ * TOTAL_UNITS_SOLD / SUM(TOTAL_UNITS_SOLD) OVER (), 2) AS units_share_pct,\n  CASE \n    WHEN distinct_months > 0 THEN\
+    \ ROUND(TOTAL_UNITS_SOLD::FLOAT / distinct_months, 1)\n    ELSE TOTAL_UNITS_SOLD\n  END AS avg_monthly_units\nFROM units_agg\n\
+    WHERE TOTAL_UNITS_SOLD > 0\nORDER BY TOTAL_UNITS_SOLD DESC;"
 - name: gross_profit_margin_test_overview
   question: Show me gross profit margin test. Where are my gross profit margin test? Gross Profit Margin Test overview.
   use_as_onboarding_question: true
-  sql: "SELECT\n  dl.DealerPulse_NAME,\n  ROUND(SUM(dl.TOTAL_REVENUE), 2) AS TOTAL_REVENUE,\n  ROUND(SUM(dl.TOTAL_COGS), 2)\
-    \ AS TOTAL_COGS,\n  ROUND(AVG(dl.GROSS_PROFIT_MARGIN_PCT), 2) AS GROSS_PROFIT_MARGIN_PCT\nFROM DealerPulse.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN_TEST\
+  sql: "SELECT\n  dl.DealerPulse_NAME,\n  ROUND(SUM(dl.TOTAL_REVENUE), 2) AS TOTAL_REVENUE,\n  ROUND(SUM(dl.TOTAL_COGS), 2) AS\
+    \ TOTAL_COGS,\n  ROUND(AVG(dl.GROSS_PROFIT_MARGIN_PCT), 2) AS GROSS_PROFIT_MARGIN_PCT\nFROM DealerPulse.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN_TEST\
     \ dl\nGROUP BY dl.DealerPulse_NAME\nORDER BY dl.DealerPulse_NAME;"
 - name: gross_profit_margin_test_with_performance
   question: Show Gross Profit Margin Test with DealerPulse performance.
@@ -2150,47 +2122,45 @@ verified_queries:
   question: Show Backorder Incidence with DealerPulse performance.
   sql: "WITH base AS (\n  SELECT\n    dl.DealerPulse_NAME,\n    ROUND(AVG(dl.BACKORDER_INCIDENCE_PCT), 2) AS BACKORDER_INCIDENCE_PCT,\n\
     \    ROUND(SUM(dl.TOTAL_ORDER_ITEMS), 2) AS TOTAL_ORDER_ITEMS,\n    ROUND(SUM(dl.BACKORDERED_ITEMS), 2) AS BACKORDERED_ITEMS,\n\
-    \  FROM DealerPulse.INFORMATION_MART.VW_BACKORDER_INCIDENCE dl\n  GROUP BY dl.DealerPulse_NAME\n),\nperf AS (\n  SELECT\
-    \ DealerPulse_NAME,\n    AVG(GROSS_PROFIT_MARGIN_PCT) AS avg_margin,\n    SUM(TOTAL_REVENUE) AS total_revenue\n  FROM\
-    \ DealerPulse.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN\n  GROUP BY DealerPulse_NAME\n)\nSELECT b.*, ROUND(p.avg_margin,2)\
-    \ AS avg_gross_margin_pct, ROUND(p.total_revenue,0) AS total_revenue\nFROM base b\nLEFT JOIN perf p ON b.DealerPulse_NAME\
-    \ = p.DealerPulse_NAME\nORDER BY p.total_revenue DESC NULLS LAST;"
+    \  FROM DealerPulse.INFORMATION_MART.VW_BACKORDER_INCIDENCE dl\n  GROUP BY dl.DealerPulse_NAME\n),\nperf AS (\n  SELECT DealerPulse_NAME,\n\
+    \    AVG(GROSS_PROFIT_MARGIN_PCT) AS avg_margin,\n    SUM(TOTAL_REVENUE) AS total_revenue\n  FROM DealerPulse.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN\n\
+    \  GROUP BY DealerPulse_NAME\n)\nSELECT b.*, ROUND(p.avg_margin,2) AS avg_gross_margin_pct, ROUND(p.total_revenue,0) AS total_revenue\n\
+    FROM base b\nLEFT JOIN perf p ON b.DealerPulse_NAME = p.DealerPulse_NAME\nORDER BY p.total_revenue DESC NULLS LAST;"
 - name: cash_conversion_cycle_overview
   question: Show me cash conversion cycle. Where are my cash conversion cycle? Cash Conversion Cycle overview.
   use_as_onboarding_question: true
   sql: "SELECT\n  dl.DealerPulse_NAME,\n  ROUND(SUM(dl.DSO), 2) AS DSO,\n  ROUND(SUM(dl.DIO), 2) AS DIO,\n  ROUND(SUM(dl.DPO),\
-    \ 2) AS DPO,\n  ROUND(SUM(dl.CCC), 2) AS CCC\nFROM DealerPulse.INFORMATION_MART.VW_CASH_CONVERSION_CYCLE dl\nGROUP BY\
-    \ dl.DealerPulse_NAME\nORDER BY dl.DealerPulse_NAME;"
+    \ 2) AS DPO,\n  ROUND(SUM(dl.CCC), 2) AS CCC\nFROM DealerPulse.INFORMATION_MART.VW_CASH_CONVERSION_CYCLE dl\nGROUP BY dl.DealerPulse_NAME\n\
+    ORDER BY dl.DealerPulse_NAME;"
 - name: cash_conversion_cycle_with_performance
   question: Show Cash Conversion Cycle with DealerPulse performance.
-  sql: "WITH base AS (\n  SELECT\n    dl.DealerPulse_NAME,\n    ROUND(SUM(dl.DSO), 2) AS DSO,\n    ROUND(SUM(dl.DIO), 2) AS\
-    \ DIO,\n    ROUND(SUM(dl.DPO), 2) AS DPO,\n    ROUND(SUM(dl.CCC), 2) AS CCC,\n  FROM DealerPulse.INFORMATION_MART.VW_CASH_CONVERSION_CYCLE\
+  sql: "WITH base AS (\n  SELECT\n    dl.DealerPulse_NAME,\n    ROUND(SUM(dl.DSO), 2) AS DSO,\n    ROUND(SUM(dl.DIO), 2) AS DIO,\n\
+    \    ROUND(SUM(dl.DPO), 2) AS DPO,\n    ROUND(SUM(dl.CCC), 2) AS CCC,\n  FROM DealerPulse.INFORMATION_MART.VW_CASH_CONVERSION_CYCLE\
     \ dl\n  GROUP BY dl.DealerPulse_NAME\n),\nperf AS (\n  SELECT DealerPulse_NAME,\n    AVG(GROSS_PROFIT_MARGIN_PCT) AS avg_margin,\n\
     \    SUM(TOTAL_REVENUE) AS total_revenue\n  FROM DealerPulse.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN\n  GROUP BY DealerPulse_NAME\n\
     )\nSELECT b.*, ROUND(p.avg_margin,2) AS avg_gross_margin_pct, ROUND(p.total_revenue,0) AS total_revenue\nFROM base b\n\
     LEFT JOIN perf p ON b.DealerPulse_NAME = p.DealerPulse_NAME\nORDER BY p.total_revenue DESC NULLS LAST;"
 - name: DealerPulse_contribution_margin_overview
-  question: Show me DealerPulse contribution margin. Where are my DealerPulse contribution margin? DealerPulse Contribution
-    Margin overview.
+  question: Show me DealerPulse contribution margin. Where are my DealerPulse contribution margin? DealerPulse Contribution Margin overview.
   use_as_onboarding_question: true
-  sql: "SELECT\n  dl.DealerPulse_NAME,\n  ROUND(SUM(dl.REVENUE_AMT), 2) AS REVENUE_AMT,\n  ROUND(SUM(dl.DIRECT_COSTS_AMT),\
-    \ 2) AS DIRECT_COSTS_AMT,\n  ROUND(SUM(dl.ALLOCATED_COSTS_AMT), 2) AS ALLOCATED_COSTS_AMT,\n  ROUND(AVG(dl.CONTRIBUTION_MARGIN_PCT),\
+  sql: "SELECT\n  dl.DealerPulse_NAME,\n  ROUND(SUM(dl.REVENUE_AMT), 2) AS REVENUE_AMT,\n  ROUND(SUM(dl.DIRECT_COSTS_AMT), 2) AS\
+    \ DIRECT_COSTS_AMT,\n  ROUND(SUM(dl.ALLOCATED_COSTS_AMT), 2) AS ALLOCATED_COSTS_AMT,\n  ROUND(AVG(dl.CONTRIBUTION_MARGIN_PCT),\
     \ 2) AS CONTRIBUTION_MARGIN_PCT\nFROM DealerPulse.INFORMATION_MART.VW_DealerPulse_CONTRIBUTION_MARGIN dl\nGROUP BY dl.DealerPulse_NAME\n\
     ORDER BY dl.DealerPulse_NAME;"
 - name: DealerPulse_contribution_margin_with_performance
   question: Show DealerPulse Contribution Margin with DealerPulse performance.
   sql: "WITH base AS (\n  SELECT\n    dl.DealerPulse_NAME,\n    ROUND(SUM(dl.REVENUE_AMT), 2) AS REVENUE_AMT,\n    ROUND(SUM(dl.DIRECT_COSTS_AMT),\
     \ 2) AS DIRECT_COSTS_AMT,\n    ROUND(SUM(dl.ALLOCATED_COSTS_AMT), 2) AS ALLOCATED_COSTS_AMT,\n    ROUND(AVG(dl.CONTRIBUTION_MARGIN_PCT),\
-    \ 2) AS CONTRIBUTION_MARGIN_PCT,\n  FROM DealerPulse.INFORMATION_MART.VW_DealerPulse_CONTRIBUTION_MARGIN dl\n  GROUP BY\
-    \ dl.DealerPulse_NAME\n),\nperf AS (\n  SELECT DealerPulse_NAME,\n    AVG(GROSS_PROFIT_MARGIN_PCT) AS avg_margin,\n  \
-    \  SUM(TOTAL_REVENUE) AS total_revenue\n  FROM DealerPulse.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN\n  GROUP BY DealerPulse_NAME\n\
-    )\nSELECT b.*, ROUND(p.avg_margin,2) AS avg_gross_margin_pct, ROUND(p.total_revenue,0) AS total_revenue\nFROM base b\n\
-    LEFT JOIN perf p ON b.DealerPulse_NAME = p.DealerPulse_NAME\nORDER BY p.total_revenue DESC NULLS LAST;"
+    \ 2) AS CONTRIBUTION_MARGIN_PCT,\n  FROM DealerPulse.INFORMATION_MART.VW_DealerPulse_CONTRIBUTION_MARGIN dl\n  GROUP BY dl.DealerPulse_NAME\n\
+    ),\nperf AS (\n  SELECT DealerPulse_NAME,\n    AVG(GROSS_PROFIT_MARGIN_PCT) AS avg_margin,\n    SUM(TOTAL_REVENUE) AS total_revenue\n\
+    \  FROM DealerPulse.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN\n  GROUP BY DealerPulse_NAME\n)\nSELECT b.*, ROUND(p.avg_margin,2) AS\
+    \ avg_gross_margin_pct, ROUND(p.total_revenue,0) AS total_revenue\nFROM base b\nLEFT JOIN perf p ON b.DealerPulse_NAME = p.DealerPulse_NAME\n\
+    ORDER BY p.total_revenue DESC NULLS LAST;"
 - name: DealerPulse_revenue_growth_overview
   question: Show me DealerPulse revenue growth. Where are my DealerPulse revenue growth? DealerPulse Revenue Growth overview.
   use_as_onboarding_question: true
-  sql: "SELECT\n  dl.DealerPulse_NAME,\n  ROUND(SUM(dl.REVENUE), 2) AS REVENUE,\n  ROUND(SUM(dl.PREV_MONTH_REVENUE), 2) AS\
-    \ PREV_MONTH_REVENUE,\n  ROUND(AVG(dl.REVENUE_GROWTH_MOM_PERCENT), 2) AS REVENUE_GROWTH_MOM_PERCENT\nFROM DealerPulse.INFORMATION_MART.VW_DealerPulse_REVENUE_GROWTH\
+  sql: "SELECT\n  dl.DealerPulse_NAME,\n  ROUND(SUM(dl.REVENUE), 2) AS REVENUE,\n  ROUND(SUM(dl.PREV_MONTH_REVENUE), 2) AS PREV_MONTH_REVENUE,\n\
+    \  ROUND(AVG(dl.REVENUE_GROWTH_MOM_PERCENT), 2) AS REVENUE_GROWTH_MOM_PERCENT\nFROM DealerPulse.INFORMATION_MART.VW_DealerPulse_REVENUE_GROWTH\
     \ dl\nGROUP BY dl.DealerPulse_NAME\nORDER BY dl.DealerPulse_NAME;"
 - name: DealerPulse_revenue_growth_with_performance
   question: Show DealerPulse Revenue Growth with DealerPulse performance.
@@ -2203,38 +2173,36 @@ verified_queries:
 - name: gross_profit_margin_overview
   question: Show me gross profit margin. Where are my gross profit margin? Gross Profit Margin overview.
   use_as_onboarding_question: true
-  sql: "SELECT\n  dl.DealerPulse_NAME,\n  ROUND(SUM(dl.TOTAL_REVENUE), 2) AS TOTAL_REVENUE,\n  ROUND(SUM(dl.TOTAL_COGS), 2)\
-    \ AS TOTAL_COGS,\n  ROUND(AVG(dl.GROSS_PROFIT_MARGIN_PCT), 2) AS GROSS_PROFIT_MARGIN_PCT\nFROM DealerPulse.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN\
+  sql: "SELECT\n  dl.DealerPulse_NAME,\n  ROUND(SUM(dl.TOTAL_REVENUE), 2) AS TOTAL_REVENUE,\n  ROUND(SUM(dl.TOTAL_COGS), 2) AS\
+    \ TOTAL_COGS,\n  ROUND(AVG(dl.GROSS_PROFIT_MARGIN_PCT), 2) AS GROSS_PROFIT_MARGIN_PCT\nFROM DealerPulse.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN\
     \ dl\nGROUP BY dl.DealerPulse_NAME\nORDER BY dl.DealerPulse_NAME;"
 - name: order_lead_time_overview
   question: Show me order lead time. Where are my order lead time? Order Lead Time overview.
   use_as_onboarding_question: true
   sql: "SELECT\n  dl.DealerPulse_NAME,\n  ROUND(SUM(dl.AVG_ORDER_LEAD_TIME_DAYS), 2) AS AVG_ORDER_LEAD_TIME_DAYS,\n  ROUND(SUM(dl.ORDERS_COUNT),\
-    \ 2) AS ORDERS_COUNT\nFROM DealerPulse.INFORMATION_MART.VW_ORDER_LEAD_TIME dl\nGROUP BY dl.DealerPulse_NAME\nORDER BY\
-    \ dl.DealerPulse_NAME;"
+    \ 2) AS ORDERS_COUNT\nFROM DealerPulse.INFORMATION_MART.VW_ORDER_LEAD_TIME dl\nGROUP BY dl.DealerPulse_NAME\nORDER BY dl.DealerPulse_NAME;"
 - name: order_lead_time_with_performance
   question: Show Order Lead Time with DealerPulse performance.
   sql: "WITH base AS (\n  SELECT\n    dl.DealerPulse_NAME,\n    ROUND(SUM(dl.AVG_ORDER_LEAD_TIME_DAYS), 2) AS AVG_ORDER_LEAD_TIME_DAYS,\n\
-    \    ROUND(SUM(dl.ORDERS_COUNT), 2) AS ORDERS_COUNT,\n  FROM DealerPulse.INFORMATION_MART.VW_ORDER_LEAD_TIME dl\n  GROUP\
-    \ BY dl.DealerPulse_NAME\n),\nperf AS (\n  SELECT DealerPulse_NAME,\n    AVG(GROSS_PROFIT_MARGIN_PCT) AS avg_margin,\n\
-    \    SUM(TOTAL_REVENUE) AS total_revenue\n  FROM DealerPulse.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN\n  GROUP BY DealerPulse_NAME\n\
-    )\nSELECT b.*, ROUND(p.avg_margin,2) AS avg_gross_margin_pct, ROUND(p.total_revenue,0) AS total_revenue\nFROM base b\n\
-    LEFT JOIN perf p ON b.DealerPulse_NAME = p.DealerPulse_NAME\nORDER BY p.total_revenue DESC NULLS LAST;"
+    \    ROUND(SUM(dl.ORDERS_COUNT), 2) AS ORDERS_COUNT,\n  FROM DealerPulse.INFORMATION_MART.VW_ORDER_LEAD_TIME dl\n  GROUP BY\
+    \ dl.DealerPulse_NAME\n),\nperf AS (\n  SELECT DealerPulse_NAME,\n    AVG(GROSS_PROFIT_MARGIN_PCT) AS avg_margin,\n    SUM(TOTAL_REVENUE)\
+    \ AS total_revenue\n  FROM DealerPulse.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN\n  GROUP BY DealerPulse_NAME\n)\nSELECT b.*, ROUND(p.avg_margin,2)\
+    \ AS avg_gross_margin_pct, ROUND(p.total_revenue,0) AS total_revenue\nFROM base b\nLEFT JOIN perf p ON b.DealerPulse_NAME =\
+    \ p.DealerPulse_NAME\nORDER BY p.total_revenue DESC NULLS LAST;"
 - name: sales_per_product_category_overview
   question: Show me sales per product category. Where are my sales per product category? Sales Per Product Category overview.
   use_as_onboarding_question: true
   sql: "SELECT\n  dl.DealerPulse_NAME,\n  dl.PRODUCT_CATEGORY,\n  ROUND(SUM(dl.TOTAL_REVENUE), 2) AS TOTAL_REVENUE,\n  ROUND(SUM(dl.TOTAL_QUANTITY),\
-    \ 2) AS TOTAL_QUANTITY\nFROM DealerPulse.INFORMATION_MART.VW_SALES_PER_PRODUCT_CATEGORY dl\nGROUP BY dl.DealerPulse_NAME,\
-    \ dl.PRODUCT_CATEGORY\nORDER BY dl.DealerPulse_NAME;"
+    \ 2) AS TOTAL_QUANTITY\nFROM DealerPulse.INFORMATION_MART.VW_SALES_PER_PRODUCT_CATEGORY dl\nGROUP BY dl.DealerPulse_NAME, dl.PRODUCT_CATEGORY\n\
+    ORDER BY dl.DealerPulse_NAME;"
 - name: sales_per_product_category_with_performance
   question: Show Sales Per Product Category with DealerPulse performance.
-  sql: "WITH base AS (\n  SELECT\n    dl.DealerPulse_NAME,\n    dl.PRODUCT_CATEGORY,\n    ROUND(SUM(dl.TOTAL_REVENUE), 2)\
-    \ AS TOTAL_REVENUE,\n    ROUND(SUM(dl.TOTAL_QUANTITY), 2) AS TOTAL_QUANTITY,\n  FROM DealerPulse.INFORMATION_MART.VW_SALES_PER_PRODUCT_CATEGORY\
+  sql: "WITH base AS (\n  SELECT\n    dl.DealerPulse_NAME,\n    dl.PRODUCT_CATEGORY,\n    ROUND(SUM(dl.TOTAL_REVENUE), 2) AS TOTAL_REVENUE,\n\
+    \    ROUND(SUM(dl.TOTAL_QUANTITY), 2) AS TOTAL_QUANTITY,\n  FROM DealerPulse.INFORMATION_MART.VW_SALES_PER_PRODUCT_CATEGORY\
     \ dl\n  GROUP BY dl.DealerPulse_NAME, dl.PRODUCT_CATEGORY\n),\nperf AS (\n  SELECT DealerPulse_NAME,\n    AVG(GROSS_PROFIT_MARGIN_PCT)\
-    \ AS avg_margin,\n    SUM(TOTAL_REVENUE) AS total_revenue\n  FROM DealerPulse.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN\n\
-    \  GROUP BY DealerPulse_NAME\n)\nSELECT b.*, ROUND(p.avg_margin,2) AS avg_gross_margin_pct, ROUND(p.total_revenue,0) AS\
-    \ total_revenue\nFROM base b\nLEFT JOIN perf p ON b.DealerPulse_NAME = p.DealerPulse_NAME\nORDER BY p.total_revenue DESC\
-    \ NULLS LAST;"
+    \ AS avg_margin,\n    SUM(TOTAL_REVENUE) AS total_revenue\n  FROM DealerPulse.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN\n  GROUP\
+    \ BY DealerPulse_NAME\n)\nSELECT b.*, ROUND(p.avg_margin,2) AS avg_gross_margin_pct, ROUND(p.total_revenue,0) AS total_revenue\n\
+    FROM base b\nLEFT JOIN perf p ON b.DealerPulse_NAME = p.DealerPulse_NAME\nORDER BY p.total_revenue DESC NULLS LAST;"
 - name: sales_volume_overview
   question: Show me sales volume. Where are my sales volume? Sales Volume overview.
   use_as_onboarding_question: true
@@ -2248,23 +2216,21 @@ verified_queries:
     )\nSELECT b.*, ROUND(p.avg_margin,2) AS avg_gross_margin_pct, ROUND(p.total_revenue,0) AS total_revenue\nFROM base b\n\
     LEFT JOIN perf p ON b.DealerPulse_NAME = p.DealerPulse_NAME\nORDER BY p.total_revenue DESC NULLS LAST;"
 - name: stock_availability_DealerPulse_overview
-  question: Show me stock availability DealerPulse. Where are my stock availability DealerPulse? Stock Availability DealerPulse
-    overview.
+  question: Show me stock availability DealerPulse. Where are my stock availability DealerPulse? Stock Availability DealerPulse overview.
   use_as_onboarding_question: true
   sql: "SELECT\n  dl.DealerPulse_NAME,\n  dl.PRODUCT_CATEGORY,\n  ROUND(SUM(dl.ON_HAND_STOCK), 2) AS ON_HAND_STOCK,\n  ROUND(SUM(dl.RESERVED_STOCK),\
     \ 2) AS RESERVED_STOCK,\n  ROUND(SUM(dl.TOTAL_DEMAND), 2) AS TOTAL_DEMAND,\n  ROUND(AVG(dl.STOCK_AVAILABILITY_PCT), 2)\
-    \ AS STOCK_AVAILABILITY_PCT\nFROM DealerPulse.INFORMATION_MART.VW_STOCK_AVAILABILITY_DealerPulse dl\nGROUP BY dl.DealerPulse_NAME,\
-    \ dl.PRODUCT_CATEGORY\nORDER BY dl.DealerPulse_NAME;"
+    \ AS STOCK_AVAILABILITY_PCT\nFROM DealerPulse.INFORMATION_MART.VW_STOCK_AVAILABILITY_DealerPulse dl\nGROUP BY dl.DealerPulse_NAME, dl.PRODUCT_CATEGORY\n\
+    ORDER BY dl.DealerPulse_NAME;"
 - name: stock_availability_DealerPulse_with_performance
   question: Show Stock Availability DealerPulse with DealerPulse performance.
-  sql: "WITH base AS (\n  SELECT\n    dl.DealerPulse_NAME,\n    dl.PRODUCT_CATEGORY,\n    ROUND(SUM(dl.ON_HAND_STOCK), 2)\
-    \ AS ON_HAND_STOCK,\n    ROUND(SUM(dl.RESERVED_STOCK), 2) AS RESERVED_STOCK,\n    ROUND(SUM(dl.TOTAL_DEMAND), 2) AS TOTAL_DEMAND,\n\
-    \    ROUND(AVG(dl.STOCK_AVAILABILITY_PCT), 2) AS STOCK_AVAILABILITY_PCT,\n  FROM DealerPulse.INFORMATION_MART.VW_STOCK_AVAILABILITY_DealerPulse\
-    \ dl\n  GROUP BY dl.DealerPulse_NAME, dl.PRODUCT_CATEGORY\n),\nperf AS (\n  SELECT DealerPulse_NAME,\n    AVG(GROSS_PROFIT_MARGIN_PCT)\
-    \ AS avg_margin,\n    SUM(TOTAL_REVENUE) AS total_revenue\n  FROM DealerPulse.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN\n\
-    \  GROUP BY DealerPulse_NAME\n)\nSELECT b.*, ROUND(p.avg_margin,2) AS avg_gross_margin_pct, ROUND(p.total_revenue,0) AS\
-    \ total_revenue\nFROM base b\nLEFT JOIN perf p ON b.DealerPulse_NAME = p.DealerPulse_NAME\nORDER BY p.total_revenue DESC\
-    \ NULLS LAST;"
+  sql: "WITH base AS (\n  SELECT\n    dl.DealerPulse_NAME,\n    dl.PRODUCT_CATEGORY,\n    ROUND(SUM(dl.ON_HAND_STOCK), 2) AS ON_HAND_STOCK,\n\
+    \    ROUND(SUM(dl.RESERVED_STOCK), 2) AS RESERVED_STOCK,\n    ROUND(SUM(dl.TOTAL_DEMAND), 2) AS TOTAL_DEMAND,\n    ROUND(AVG(dl.STOCK_AVAILABILITY_PCT),\
+    \ 2) AS STOCK_AVAILABILITY_PCT,\n  FROM DealerPulse.INFORMATION_MART.VW_STOCK_AVAILABILITY_DealerPulse dl\n  GROUP BY dl.DealerPulse_NAME,\
+    \ dl.PRODUCT_CATEGORY\n),\nperf AS (\n  SELECT DealerPulse_NAME,\n    AVG(GROSS_PROFIT_MARGIN_PCT) AS avg_margin,\n    SUM(TOTAL_REVENUE)\
+    \ AS total_revenue\n  FROM DealerPulse.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN\n  GROUP BY DealerPulse_NAME\n)\nSELECT b.*, ROUND(p.avg_margin,2)\
+    \ AS avg_gross_margin_pct, ROUND(p.total_revenue,0) AS total_revenue\nFROM base b\nLEFT JOIN perf p ON b.DealerPulse_NAME =\
+    \ p.DealerPulse_NAME\nORDER BY p.total_revenue DESC NULLS LAST;"
 auto_verified_queries:
 - query_name: gross_profit_margin_test_overview
   view: VW_GROSS_PROFIT_MARGIN_TEST
