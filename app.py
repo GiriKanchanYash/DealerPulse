@@ -3,9 +3,7 @@ import pandas as pd
 import numpy as np
 import yaml
 from datetime import datetime, timedelta
-from snowflake.snowpark import Session  # <-- ADD THIS
-from snowflake.snowpark.context import get_active_session  # <-- keep one way to get active session
-from snowflake.snowpark.functions import col, avg, sum as sf_sum
+from db_service import get_active_session, run_df
 import plotly.graph_objects as go
 import plotly.express as px
 from io import StringIO
@@ -24,6 +22,12 @@ from sklearn.ensemble import IsolationForest
 import warnings
 import logging
 import textwrap
+
+from config import Config
+from llm_service import generate_sql, cortex_complete
+
+logger = logging.getLogger(__name__)
+
 warnings.filterwarnings('ignore')
 logging.basicConfig(level=logging.INFO)
 
@@ -33,9 +37,8 @@ logging.basicConfig(level=logging.INFO)
 # This file combines three systems into one:
 #
 # 1. YAML UPDATE ENGINE (integrated from update_semantic.py)
-#    - Auto-syncs Snowflake views to YAML semantic model
+#    - Auto-syncs Microsoft Fabric views to YAML semantic model
 #    - Detects new VW_* views and adds them automatically
-#    - Function: _update_yaml_from_snowflake()
 #
 # 2. YAML ROUTING ENGINE (integrated from yaml_routing_engine.py)
 #    - Builds routing logic dynamically from YAML at startup
@@ -54,8 +57,8 @@ logging.basicConfig(level=logging.INFO)
 # Startup Flow:
 #   1. Streamlit app starts → st.set_page_config()
 #   2. initialize_app_routing() called (cached)
-#   3. Loads YAML from Snowflake or local file
-#   4. Optionally syncs new views from Snowflake → updates YAML
+#   3. Loads YAML from local file
+#   4. Optionally syncs new views from Microsoft Fabric → updates YAML
 #   5. Calls _initialize_routing_from_yaml() with YAML content
 #   6. Dynamic routing variables populated (_INTENTS, _ENTITY_PATTERNS, _KEYWORD_TABLES)
 #   7. App ready to route questions
@@ -69,9 +72,9 @@ logging.basicConfig(level=logging.INFO)
 #   6. Results cached with question hash
 #
 # Adding New Views:
-#   1. Add VW_NEW_VIEW to Snowflake
+#   1. Add VW_NEW_VIEW to Microsoft Fabric
 #   2. Run update_semantic.py OR set auto_add_views=True in initialize_app_routing()
-#   3. Run dealerapp.py again
+#   3. Run app.py again
 #   4. New view automatically in YAML and routing system
 #   5. NO PYTHON CODE CHANGES NEEDED!
 #
@@ -409,32 +412,9 @@ def _save_yaml_locally(yaml_content: str, filename: str = "dealer_model_simplifi
 
 
 def _upload_yaml_to_snowflake(session, yaml_content: str, filename: str = "dealer_model_simplified_06_03_2026.yml") -> bool:
-    """Upload YAML to Snowflake stage."""
-    if not session:
-        logging.warning("[YAML UPLOAD] No Snowflake session - skipping stage upload")
-        return False
-    
-    try:
-        from io import BytesIO
-        
-        # Write YAML to bytes
-        yaml_bytes = yaml_content.encode("utf-8")
-        yaml_file = BytesIO(yaml_bytes)
-        
-        # Upload to stage
-        stage_path = f"@DEALER.BUSINESS_VAULT.DEALER_STAGE/{filename}"
-        session.file.put_stream(
-            yaml_file,
-            stage_path,
-            auto_compress=False,
-            overwrite=True
-        )
-        
-        logging.info(f"[YAML UPLOAD] ✅ Uploaded to Snowflake stage: {stage_path}")
-        return True
-    except Exception as e:
-        logging.error(f"[YAML UPLOAD] ❌ Failed to upload to stage: {e}")
-        return False
+    """Stage upload is disabled for Fabric compatibility."""
+    logging.info("[YAML UPLOAD] Stage upload skipped (Fabric compatibility mode)")
+    return False
 
 
 def _initialize_routing_from_yaml(yaml_content: str) -> None:
@@ -848,30 +828,20 @@ def route_question(question: str, verified_queries: dict, cortex_generate_fn: Op
 # Load YAML config from Snowflake stage first; fallback to local file
 def _load_ui_config():
     """
-    Load UI configuration from Snowflake stage (@DEALER.BUSINESS_VAULT.DEALER_STAGE/ui_config.yaml)
-    Falls back to local file if stage is unavailable.
+    Load UI configuration from local files only.
+
+    Microsoft Fabric does not provide the Snowflake stage/file API used by the
+    original implementation, so this loader now prefers local project files and
+    otherwise falls back to the built-in defaults in the code below.
     """
-    stage_err = None
     local_err = None
-    
-    # Try: read from stage using Snowpark file API
-    try:
-        session = get_active_session()
-        stage_path = "@DEALER.BUSINESS_VAULT.DEALER_STAGE/ui_config1.yaml"
-        
-        with session.file.get_stream(stage_path) as f:
-            config_data = yaml.safe_load(f)
-            print(f"✅ Loaded ui_config.yaml from stage: {stage_path}")
-            return config_data or {}
-    except Exception as e:
-        stage_err = str(e)
-        print(f"⚠️ Could not load from stage: {stage_err}")
-    
-    # Fallback: Try local file
+
     try:
         config_paths = [
+            os.path.join(os.path.dirname(__file__), "app_settings.yaml"),
             os.path.join(os.path.dirname(__file__), "ui_config.yaml"),
             os.path.join(os.getcwd(), "ui_config.yaml"),
+            os.path.join(os.getcwd(), "app_settings.yaml"),
             "ui_config.yaml"
         ]
         
@@ -879,18 +849,18 @@ def _load_ui_config():
             if os.path.exists(path):
                 with open(path, "r", encoding="utf-8") as f:
                     config_data = yaml.safe_load(f)
-                    print(f"✅ Loaded ui_config.yaml from local file: {path}")
+                    print(f"✅ Loaded UI config from local file: {path}")
                     return config_data or {}
         
-        local_err = "No local ui_config.yaml found"
+        local_err = "No local UI config file found"
     except Exception as e:
         local_err = str(e)
-    
-    # If both fail
+
+    # If both fail, return an empty config so the defaults below are used.
     print(
-        f"⚠️ Failed to load ui_config.yaml from stage or local file.\n"
-        f"Stage error: {stage_err}\nLocal error: {local_err}\n"
-        f"Using empty config - UI styling may not load correctly"
+        f"⚠️ Failed to load UI config from local files.\n"
+        f"Local error: {local_err}\n"
+        f"Using empty config - UI styling will fall back to built-in defaults"
     )
     return {}
 
@@ -922,14 +892,13 @@ st.set_page_config(
 # YAML MODEL LOADER - Load semantic model for routing and Cortex
 # ════════════════════════════════════════════════════════════════════════════
 
-def load_yaml_model(yaml_path="dealer_model_simplified_06_03_2026.yml"):
+def load_yaml_model(yaml_path="Training_model.yml"):
     """
     Load semantic model for Cortex/Genie.
-    - In Snowflake: reads from stage @DEALER.BUSINESS_VAULT.DEALER_STAGE/dealer_model_simplified_06_03_2026.yml
-    - Locally: tries multiple file paths
+    - Locally/Fabric: tries multiple file paths
     - Fallback: creates minimal YAML if file not found
     """
-    # Try local file system first (fastest path for local dev)
+    # Try local file system first.
     local_paths = [
         yaml_path,
         os.path.join(os.path.dirname(__file__), yaml_path),
@@ -950,32 +919,6 @@ def load_yaml_model(yaml_path="dealer_model_simplified_06_03_2026.yml"):
                         return model
             except Exception as e:
                 logging.debug(f"[YAML] Failed to load {path}: {e}")
-    
-    # Try Snowflake stage (if session is available)
-    try:
-        session = get_snowflake_connection()
-        stage_path = "@DEALER.BUSINESS_VAULT.DEALER_STAGE/dealer_model_simplified_06_03_2026.yml"
-        try:
-            with session.file.get_stream(stage_path) as f:
-                yaml_content = f.read().decode("utf-8")
-                model = yaml.safe_load(yaml_content)
-                if model:
-                    logging.info(f"[YAML] ✅ Loaded from Snowflake stage: {stage_path}")
-                    
-                    # Save to local disk for next time
-                    try:
-                        local_save_path = os.path.join(os.path.dirname(__file__), yaml_path)
-                        with open(local_save_path, "w", encoding="utf-8") as f:
-                            f.write(yaml_content)
-                        logging.debug(f"[YAML] Cached stage YAML to local: {local_save_path}")
-                    except Exception as save_err:
-                        logging.debug(f"[YAML] Could not cache to local: {save_err}")
-                    
-                    return model
-        except Exception as stage_err:
-            logging.debug(f"[YAML] Stage read failed: {stage_err}")
-    except Exception as session_err:
-        logging.debug(f"[YAML] Snowflake session not available: {session_err}")
     
     # FALLBACK: Create minimal YAML with just verified_queries
     # This allows the app to run even without YAML file
@@ -1045,7 +988,7 @@ _YAML_LOCAL_PATH = os.path.join(_SCRIPT_DIR, _YAML_FILENAME)  # Absolute path to
 _SEMANTIC_CONFIG = {
     "database":        "DEALER",
     "schema":          "INFORMATION_MART",
-    "stage":           "@DEALER.BUSINESS_VAULT.DEALER_STAGE",
+    "stage":           "LOCAL",
     "yaml_filename":   _YAML_FILENAME,
     "local_output":    _YAML_LOCAL_PATH,  # ✅ ABSOLUTE PATH
     "local_fallback":  _YAML_LOCAL_PATH,  # ✅ ABSOLUTE PATH
@@ -1347,28 +1290,13 @@ def _semantic_merge_jm(model: Dict, entry: Optional[Dict]) -> bool:
     return False
 
 def _semantic_load_yaml(session, cfg: Dict) -> Dict:
-    """Load YAML from stage or local file."""
-    stage_path = f"{cfg['stage']}/{cfg['yaml_filename']}"
+    """Load YAML from local file."""
     local_path = cfg["local_fallback"]
     
     logging.info("[SEMANTIC] ════════════════════════════════════════════════════════════")
     logging.info(f"[SEMANTIC] YAML LOADING")
-    logging.info(f"[SEMANTIC] Stage path: {stage_path}")
     logging.info(f"[SEMANTIC] Local path: {local_path}")
     logging.info("[SEMANTIC] ════════════════════════════════════════════════════════════")
-    
-    # Try stage first
-    if session:
-        try:
-            with session.file.get_stream(stage_path) as f:
-                data = yaml.safe_load(f.read().decode("utf-8")) or {}
-            num_tables = len(data.get("tables", []))
-            logging.info(f"[SEMANTIC] ✅ Loaded YAML from STAGE: {stage_path} ({num_tables} tables)")
-            return data
-        except Exception as e:
-            logging.warning(f"[SEMANTIC] Stage load failed ({type(e).__name__}): {str(e)[:100]}...")
-    else:
-        logging.warning(f"[SEMANTIC] No session - cannot load from stage")
     
     # Try local fallback
     try:
@@ -1383,43 +1311,13 @@ def _semantic_load_yaml(session, cfg: Dict) -> Dict:
     except Exception as e:
         logging.warning(f"[SEMANTIC] Local load failed ({type(e).__name__}): {str(e)[:100]}...")
     
-    logging.warning(f"[SEMANTIC] Could not load YAML from stage or local - will use minimal fallback")
+    logging.warning(f"[SEMANTIC] Could not load YAML locally - will use minimal fallback")
     return {}
 
 def _semantic_upload_yaml(session, yaml_content: str, stage: str, filename: str) -> bool:
-    """Upload YAML to Snowflake stage via put_stream (works in both local and Snowflake contexts)."""
-    if not session:
-        logging.warning(f"[SEMANTIC] Upload skipped: No session available")
-        return False
-    
-    try:
-        from io import BytesIO
-        
-        # Convert YAML content to bytes
-        yaml_bytes = yaml_content.encode("utf-8")
-        yaml_stream = BytesIO(yaml_bytes)
-        
-        # Build full stage path
-        stage_path = f"{stage}/{filename}"
-        
-        file_size = len(yaml_bytes) / 1024
-        logging.info(f"[SEMANTIC] Uploading YAML ({file_size:.1f}KB) to {stage_path}")
-        
-        # Upload via put_stream (works in both local and Snowflake)
-        session.file.put_stream(
-            yaml_stream,
-            stage_path,
-            auto_compress=False,
-            overwrite=True
-        )
-        
-        logging.info(f"[SEMANTIC] ✅ Successfully uploaded YAML to stage: {stage_path}")
-        return True
-    except Exception as e:
-        logging.error(f"[SEMANTIC] ❌ Upload failed: {type(e).__name__}: {str(e)[:200]}")
-        import traceback
-        logging.debug(traceback.format_exc())
-        return False
+    """Stage upload is disabled for Fabric compatibility."""
+    logging.info("[SEMANTIC] Stage upload skipped (Fabric compatibility mode)")
+    return False
 
 def _semantic_run(cfg: Dict = None) -> Dict:
     """Main orchestrator - builds complete YAML from Snowflake views."""
@@ -2576,7 +2474,7 @@ class DealerPerformanceForecaster:
         """
         
         try:
-            df = self.session.sql(query).to_pandas()
+            df = self.run_df(query).to_pandas()
             if df.empty or len(df) < 8:
                 # Fallback to mock data for testing
                 pass  # silently handle
@@ -2695,7 +2593,7 @@ class AnomalyDetector:
             sys.stderr.write(msg + "\n")
             sys.stderr.flush()
             
-            df = self.session.sql(query).to_pandas()
+            df = self.run_df(query).to_pandas()
             
             msg = f"[ANOMALY] Query returned {df.shape[0]} rows"
             print(msg, flush=True)
@@ -3579,72 +3477,13 @@ If these constraints cannot be satisfied, respond with a clear explanation of th
 # ============================================================================
 @st.cache_resource
 def get_snowflake_connection():
-    """Establish Snowflake connection."""
-    try:
-        if SNOWFLAKE_AVAILABLE:
-            # Running inside Snowflake (Snowsight/SiS) – reuse the active session
-            session = get_active_session()
-            return session
-        else:
-            # Local development – require secrets.toml with a "snowflake" block
-            # Example in .streamlit/secrets.toml:
-            # [snowflake]
-            # account = "xy12345.us-east-1"
-            # user = "YOUR_USER"
-            # password = "YOUR_PASSWORD"  # or use OAuth/keypair
-            # role = "SYSADMIN"
-            # warehouse = "COMPUTE_WH"
-            # database = "DEALER"
-            # schema = "INFORMATION_MART"
-            cfg = st.secrets.get("snowflake", None)
-            if not cfg:
-                raise RuntimeError("Missing [snowflake] config in .streamlit/secrets.toml")
-            session = Session.builder.configs(dict(cfg)).create()
-            return session
-    except Exception as e:
-        st.error(f"Failed to connect to Snowflake: {e}")
-        st.stop()
+    """Backward-compatible alias for the Fabric session helper."""
+    return get_active_session()
 
 @st.cache_data(ttl=7200)  # Cache for 2 hours instead of 1 for better performance
 def load_semantic_model():
-    """
-    Load semantic model from a stage first; if not available, fall back to local YAML.
-    Compatible with Streamlit-in-Snowflake and local dev.
-    """
-    session = get_snowflake_connection()
-
-    # Try: read from stage using Snowpark file API (server-side)
-    stage_path = "@DEALER.BUSINESS_VAULT.DEALER_STAGE/dealer_model_simplified_06_03_2026.yml"
-    try:
-        # Preferred: Snowpark file API
-        with session.file.get_stream(stage_path) as f:
-            yaml_content = f.read().decode("utf-8")
-            return yaml.safe_load(yaml_content)
-    except Exception as stage_err:
-        # Fallback: use GET with SELECT if file API is restricted in your region/edition
-        try:
-            df = session.sql(f"""
-                SELECT $1 AS line
-                FROM {stage_path} 
-                (FILE_FORMAT => (TYPE => 'CSV' FIELD_DELIMITER => '\n' SKIP_HEADER => 0))
-            """).to_pandas()
-            if not df.empty:
-                yaml_content = "\n".join(df["LINE"].tolist()) if "LINE" in df.columns else "\n".join(df["line"].tolist())
-                return yaml.safe_load(yaml_content)
-        except Exception:
-            pass  # we'll fall back to local
-
-        # Final fallback: local file
-        try:
-            yaml_path = os.path.join(os.path.dirname(__file__), "dealer_model_simplified_06_03_2026.yml")
-            with open(yaml_path, "r", encoding="utf-8") as f:
-                return yaml.safe_load(f)
-        except Exception as local_err:
-            st.error(
-                "Could not load semantic model from stage or local file.\n"
-                f"Stage error: {stage_err}\nLocal error: {local_err}"
-            )
-            return None
+    """Load semantic model from the local YAML file used by Fabric."""
+    return load_yaml_model("Training_model.yml")
 
 
 _local_semantic_cache = None
@@ -3654,11 +3493,10 @@ def _load_local_semantic_model():
     if _local_semantic_cache is not None:
         return _local_semantic_cache
     try:
-        with open('DEALER_SEMANTIC_MODEL_V4.yml', 'r', encoding='utf-8') as f:
-            _local_semantic_cache = yaml.safe_load(f)
-            return _local_semantic_cache
+        _local_semantic_cache = load_yaml_model("Training_model.yml")
+        return _local_semantic_cache
     except Exception:
-        
+        st.error("Failed to load local semantic model.")
         _local_semantic_cache = None
         return None
 
@@ -3960,7 +3798,7 @@ def fetch_order_fulfillment(_session, filters=None, sla_days=7):
             from_date_str = filters['from_date'].strftime('%Y-%m-%d')
             to_date_str = filters['to_date'].strftime('%Y-%m-%d')
             query += f" AND PERIOD_START_DATE >= '{from_date_str}' AND PERIOD_START_DATE <= '{to_date_str}'"
-        result = _session.sql(query).to_pandas()
+        result = run_df(query).to_pandas()
         if result.empty or result.iloc[0]['TOTAL'] == 0:
             pass  # silently handle
             return None
@@ -3989,7 +3827,7 @@ def fetch_avg_tat(_session, filters=None):
             to_month = filters['to_date'].month
             query += f" AND (PERIOD_YEAR > {from_year} OR (PERIOD_YEAR = {from_year} AND PERIOD_MONTH >= {from_month}))"
             query += f" AND (PERIOD_YEAR < {to_year} OR (PERIOD_YEAR = {to_year} AND PERIOD_MONTH <= {to_month}))"
-        result = _session.sql(query).to_pandas()
+        result = run_df(query).to_pandas()
         tat_hours = result.iloc[0]['AVG_TAT'] if not result.empty else None
         if tat_hours is None or pd.isna(tat_hours):
             pass  # silently handle
@@ -4019,7 +3857,7 @@ def fetch_revenue_metrics(_session, filters=None):
             to_month = filters['to_date'].month
             query += f" AND (PERIOD_YEAR > {from_year} OR (PERIOD_YEAR = {from_year} AND PERIOD_MONTH >= {from_month}))"
             query += f" AND (PERIOD_YEAR < {to_year} OR (PERIOD_YEAR = {to_year} AND PERIOD_MONTH <= {to_month}))"
-        result = _session.sql(query).to_pandas()
+        result = run_df(query).to_pandas()
         if not result.empty:
             return {
                 'revenue': result.iloc[0]['TOTAL_REVENUE'] if result.iloc[0]['TOTAL_REVENUE'] is not None else 0,
@@ -4052,7 +3890,7 @@ def fetch_sales_vs_target(_session, filters=None):
             to_month = filters['to_date'].month
             query += f" AND (PERIOD_YEAR > {from_year} OR (PERIOD_YEAR = {from_year} AND PERIOD_MONTH >= {from_month}))"
             query += f" AND (PERIOD_YEAR < {to_year} OR (PERIOD_YEAR = {to_year} AND PERIOD_MONTH <= {to_month}))"
-        result = _session.sql(query).to_pandas()
+        result = run_df(query).to_pandas()
         if result.empty:
             return 0.0
         return float(result.iloc[0]['TOTAL_REVENUE']) if result.iloc[0]['TOTAL_REVENUE'] is not None else 0.0
@@ -4073,7 +3911,7 @@ def fetch_strategic_insights(_session):
         FROM DEALER.INFORMATION_MART.VW_STRATEGIC_INSIGHTS
         ORDER BY PRIORITY_LEVEL DESC
         """
-        return _session.sql(query).to_pandas()
+        return run_df(query).to_pandas()
     except Exception as e:
         # View doesn't exist or query failed - use mock data
         return generate_mock_insights()
@@ -4297,7 +4135,7 @@ def fetch_dealers(_session):
         WHERE DEALER_NAME IS NOT NULL
         ORDER BY DEALER_NAME
         """
-        result = _session.sql(query).to_pandas()
+        result = run_df(query).to_pandas()
         dealer_list = result['DEALER_NAME'].dropna().tolist() if not result.empty else []
         return dealer_list
     except Exception as e:
@@ -4320,7 +4158,7 @@ def fetch_cash_conversion_cycle(_session, filters=None):
                 from_month = filters['from_date'].strftime('%Y-%m')
                 to_month = filters['to_date'].strftime('%Y-%m')
                 query += f" AND PERIOD_MONTH BETWEEN '{from_month}' AND '{to_month}'"
-        result = _session.sql(query).to_pandas()
+        result = run_df(query).to_pandas()
         if result.empty:
             return 30.0  # Default CCC
         result.columns = result.columns.str.lower()
@@ -4347,7 +4185,7 @@ def fetch_repair_turnaround_time(_session, filters=None):
                 from_date_str = filters['from_date'].strftime('%Y-%m-%d')
                 to_date_str = filters['to_date'].strftime('%Y-%m-%d')
                 query += f" AND PERIOD_START_DATE >= '{from_date_str}' AND PERIOD_START_DATE <= '{to_date_str}'"
-        result = _session.sql(query).to_pandas()
+        result = run_df(query).to_pandas()
         if result.empty:
             return 24  # Default TAT
         result.columns = result.columns.str.lower()
@@ -4373,7 +4211,7 @@ def fetch_revenue_growth(_session, filters=None):
                 from_month = filters['from_date'].strftime('%Y-%m')
                 to_month = filters['to_date'].strftime('%Y-%m')
                 query += f" AND PERIOD_MONTH BETWEEN '{from_month}' AND '{to_month}'"
-        result = _session.sql(query).to_pandas()
+        result = run_df(query).to_pandas()
         result.columns = result.columns.str.lower()
         val = float(result.iloc[0]['revenue_growth_pct']) if not result.empty and result.iloc[0]['revenue_growth_pct'] is not None else None
         return val if val is not None else 2.5  # Default average growth
@@ -4396,7 +4234,7 @@ def fetch_gross_profit_margin(_session, filters=None):
                 from_month = filters['from_date'].strftime('%Y-%m')
                 to_month = filters['to_date'].strftime('%Y-%m')
                 query += f" AND PERIOD_MONTH BETWEEN '{from_month}' AND '{to_month}'"
-        result = _session.sql(query).to_pandas()
+        result = run_df(query).to_pandas()
         result.columns = result.columns.str.lower()
         val = float(result.iloc[0]['gross_profit_margin_pct']) if not result.empty and result.iloc[0]['gross_profit_margin_pct'] is not None else None
         return val if val is not None else 25.0  # Default margin
@@ -4421,7 +4259,7 @@ def fetch_sales_per_product_category(_session, filters=None):
             from_date_str = filters['from_date'].strftime('%Y-%m-%d')
             to_date_str = filters['to_date'].strftime('%Y-%m-%d')
             query += f" AND PERIOD_START_DATE >= '{from_date_str}' AND PERIOD_START_DATE <= '{to_date_str}'"
-        result = _session.sql(query).to_pandas()
+        result = run_df(query).to_pandas()
         result.columns = result.columns.str.lower()
         return float(result.iloc[0]['avg_revenue_per_product']) if not result.empty and result.iloc[0]['avg_revenue_per_product'] is not None else 0
     except Exception as e:
@@ -4444,7 +4282,7 @@ def fetch_order_lead_time(_session, filters=None):
             from_date_str = filters['from_date'].strftime('%Y-%m-%d')
             to_date_str = filters['to_date'].strftime('%Y-%m-%d')
             query += f" AND PERIOD_START_DATE >= '{from_date_str}' AND PERIOD_START_DATE <= '{to_date_str}'"
-        result = _session.sql(query).to_pandas()
+        result = run_df(query).to_pandas()
         if result.empty:
             return 0
         
@@ -4473,7 +4311,7 @@ def fetch_stock_availability(_session, filters=None):
                 from_date_str = filters['from_date'].strftime('%Y-%m-%d')
                 to_date_str = filters['to_date'].strftime('%Y-%m-%d')
                 query += f" AND PERIOD_START_DATE >= '{from_date_str}' AND PERIOD_START_DATE <= '{to_date_str}'"
-        result = _session.sql(query).to_pandas()
+        result = run_df(query).to_pandas()
         result.columns = result.columns.str.lower()
         val = float(result.iloc[0]['stock_availability_pct']) if not result.empty and result.iloc[0]['stock_availability_pct'] is not None else None
         return val if val is not None else 85.0  # Default availability
@@ -4502,7 +4340,7 @@ def fetch_sales_volume(_session, filters=None):
             FROM DEALER.INFORMATION_MART.VW_SALES_VOLUME
             WHERE 1=1
             """
-        result = _session.sql(query).to_pandas()
+        result = run_df(query).to_pandas()
         result.columns = result.columns.str.lower()
         if not result.empty:
             val = result.iloc[0].get('total_units_sold') or result.iloc[0].get('avg_units_sold')
@@ -4528,7 +4366,7 @@ def fetch_contribution_margin(_session, filters=None):
                 from_date_str = filters['from_date'].strftime('%Y-%m-%d')
                 to_date_str = filters['to_date'].strftime('%Y-%m-%d')
                 query += f" AND PERIOD_START_DATE >= '{from_date_str}' AND PERIOD_START_DATE <= '{to_date_str}'"
-        result = _session.sql(query).to_pandas()
+        result = run_df(query).to_pandas()
         result.columns = result.columns.str.lower()
         val = float(result.iloc[0]['contribution_margin_pct']) if not result.empty and result.iloc[0]['contribution_margin_pct'] is not None else None
         return val if val is not None else 20.0  # Default margin
@@ -4551,7 +4389,7 @@ def fetch_backorder_incidence(_session, filters=None):
                 from_date_str = filters['from_date'].strftime('%Y-%m-%d')
                 to_date_str = filters['to_date'].strftime('%Y-%m-%d')
                 query += f" AND PERIOD_START_DATE >= '{from_date_str}' AND PERIOD_START_DATE <= '{to_date_str}'"
-        result = _session.sql(query).to_pandas()
+        result = run_df(query).to_pandas()
         result.columns = result.columns.str.lower()
         val = float(result.iloc[0]['backorder_incidence_pct']) if not result.empty and result.iloc[0]['backorder_incidence_pct'] is not None else None
         return val if val is not None else 5.0  # Default backorder
@@ -4731,7 +4569,7 @@ def fetch_regions(_session):
         WHERE REGION IS NOT NULL
         ORDER BY REGION
         """
-        result = _session.sql(query).to_pandas()
+        result = run_df(query).to_pandas()
         regions = result['REGION'].dropna().tolist() if not result.empty else []
         # Return database data if available, otherwise use sample data
         return regions if regions else ['North', 'South', 'East', 'West', 'Central', 'North-East', 'North-West']
@@ -4750,7 +4588,7 @@ def fetch_products(_session):
         WHERE PRODUCT_CATEGORY IS NOT NULL
         ORDER BY PRODUCT_CATEGORY
         """
-        result = _session.sql(query).to_pandas()
+        result = run_df(query).to_pandas()
         products = result['PRODUCT_CATEGORY'].dropna().tolist() if not result.empty else []
         # Return database data if available, otherwise use sample data
         return products if products else ['Sedan', 'SUV', 'Hatchback', 'Truck', 'MUV', 'Commercial', 'EV']
@@ -6381,7 +6219,7 @@ def fetch_revenue_trend(_session):
         ORDER BY dealer_name, PERIOD_YEAR DESC
         LIMIT 50
         """
-        return _session.sql(query).to_pandas()
+        return run_df(query).to_pandas()
     except Exception as e:
         pass  # silently handle — no user-facing warning
         return pd.DataFrame()
@@ -6401,7 +6239,7 @@ def fetch_profit_margin_by_dealer(_session):
         ORDER BY GROSS_PROFIT_MARGIN_PCT DESC
         LIMIT 15
         """
-        result = _session.sql(query).to_pandas()
+        result = run_df(query).to_pandas()
         result.columns = result.columns.str.lower()
         return result
     except Exception as e:
@@ -6422,7 +6260,7 @@ def fetch_sales_by_product_category(_session):
         ORDER BY total_revenue DESC
         LIMIT 20
         """
-        result = _session.sql(query).to_pandas()
+        result = run_df(query).to_pandas()
         result.columns = result.columns.str.lower()
         return result
     except Exception as e:
@@ -6446,7 +6284,7 @@ def fetch_cash_conversion_cycle_trend(_session):
         ORDER BY CCC DESC
         LIMIT 10
         """
-        result = _session.sql(query).to_pandas()
+        result = run_df(query).to_pandas()
         result.columns = result.columns.str.lower()
         return result
     except Exception as e:
@@ -6467,7 +6305,7 @@ def fetch_order_lead_time_distribution(_session):
         ORDER BY avg_lead_time DESC
         LIMIT 10
         """
-        result = _session.sql(query).to_pandas()
+        result = run_df(query).to_pandas()
         result.columns = result.columns.str.lower()
         return result
     except Exception as e:
@@ -7061,8 +6899,6 @@ import pandas as pd
 import streamlit as st
 import yaml
 
-from snowflake.snowpark.context import get_active_session
-
 
 # ============================================================================
 # CONFIG
@@ -7470,7 +7306,7 @@ def route_verified_query_smart(question: str, model: dict, session=None):
             return ""
         try:
             yaml_content = ""
-            model_temp = load_yaml_model("dealer_model_simplified_06_03_2026.yml")
+            model_temp = load_yaml_model("Training_model.yml")
             if model_temp:
                 yaml_content = yaml.dump(model_temp, default_flow_style=False)
             
@@ -8090,7 +7926,7 @@ def run_quick_analysis(analysis_key: str):
     }
 
     # Load semantic model from stage or local file
-    model = load_yaml_model("dealer_model_simplified_06_03_2026.yml")
+    model = load_yaml_model("Training_model.yml")
     
     if not model or "verified_queries" not in model:
         return {"layout": "cortex", "error": "Could not load semantic model or no verified_queries found in YAML"}
@@ -8698,7 +8534,7 @@ def call_cortex_analyst(
     print(f"[TIMING] Starting Cortex SQL gen...")
     yaml_content = ""
     try:
-        model_temp = load_yaml_model("dealer_model_simplified_06_03_2026.yml")
+        model_temp = load_yaml_model("Training_model.yml")
         if model_temp:
             yaml_content = yaml.dump(model_temp, default_flow_style=False)
     except Exception as e:
