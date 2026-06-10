@@ -892,7 +892,7 @@ st.set_page_config(
 # YAML MODEL LOADER - Load semantic model for routing and Cortex
 # ════════════════════════════════════════════════════════════════════════════
 
-def load_yaml_model(yaml_path="Training_model.yml"):
+def load_yaml_model(yaml_path="genie_Training.yml"):
     """
     Load semantic model for Cortex/Genie.
     - Locally/Fabric: tries multiple file paths
@@ -907,6 +907,7 @@ def load_yaml_model(yaml_path="Training_model.yml"):
         "dealer_model_simplified_06_03_2026.yml",
         "dealer_model.yml",
         "semantic_model.yml",
+        "genie_Training.yml",
     ]
     
     for path in local_paths:
@@ -1468,15 +1469,15 @@ def _semantic_run(cfg: Dict = None) -> Dict:
 def initialize_app_routing():
     """Initialize routing engine by building YAML from Snowflake and loading routing."""
     
-    # Step 1: Build complete YAML from Snowflake using integrated update_semantic logic
-    logging.info("[APP INIT] ✅ Building complete YAML from Snowflake views...")
+    # Step 1: Build complete YAML from the local Fabric-backed semantic file
+    logging.info("[APP INIT] ✅ Building complete YAML from Fabric-backed views...")
     try:
         result = _semantic_run()
         num_added = len(result.get("added", []))
         num_updated = len(result.get("updated", []))
         logging.info(f"[APP INIT] ✅ YAML update completed: {num_added} added, {num_updated} updated")
     except Exception as e:
-        logging.warning(f"[APP INIT] ⚠️ YAML update failed: {e} - loading existing file")
+        logging.warning(f"[APP INIT] ⚠️ YAML update failed: {e} - loading existing local file")
     
     # Step 2: Load the YAML (freshly generated or existing)
     logging.info("[APP INIT] Loading YAML model...")
@@ -1524,15 +1525,15 @@ def _init_routing_cached():
     """
     logging.info("[CACHED INIT] 🔧 Starting cached routing initialization...")
     try:
-        # Step 1: Build YAML from Snowflake
-        logging.info("[APP INIT] ✅ Building complete YAML from Snowflake views...")
+        # Step 1: Build YAML from the local Fabric-backed semantic file
+        logging.info("[APP INIT] ✅ Building complete YAML from Fabric-backed views...")
         try:
             result = _semantic_run()
             num_added = len(result.get("added", []))
             num_updated = len(result.get("updated", []))
             logging.info(f"[APP INIT] ✅ YAML update completed: {num_added} added, {num_updated} updated")
         except Exception as e:
-            logging.warning(f"[APP INIT] ⚠️ YAML update failed: {e} - loading existing file")
+            logging.warning(f"[APP INIT] ⚠️ YAML update failed: {e} - loading existing local file")
         
         # Step 2: Load YAML
         logging.info("[APP INIT] Loading YAML model...")
@@ -3473,7 +3474,7 @@ If these constraints cannot be satisfied, respond with a clear explanation of th
 """
 
 # ============================================================================
-# SNOWFLAKE CONFIGURATION & CONNECTION
+# FABRIC CONFIGURATION & CONNECTION
 # ============================================================================
 @st.cache_resource
 def get_snowflake_connection():
@@ -3482,8 +3483,8 @@ def get_snowflake_connection():
 
 @st.cache_data(ttl=7200)  # Cache for 2 hours instead of 1 for better performance
 def load_semantic_model():
-    """Load semantic model from the local YAML file used by Fabric."""
-    return load_yaml_model("Training_model.yml")
+    """Load the semantic model from the local Fabric training file."""
+    return load_yaml_model("genie_Training.yml")
 
 
 _local_semantic_cache = None
@@ -3493,7 +3494,7 @@ def _load_local_semantic_model():
     if _local_semantic_cache is not None:
         return _local_semantic_cache
     try:
-        _local_semantic_cache = load_yaml_model("Training_model.yml")
+        _local_semantic_cache = load_yaml_model("genie_Training.yml")
         return _local_semantic_cache
     except Exception:
         st.error("Failed to load local semantic model.")
@@ -7306,7 +7307,7 @@ def route_verified_query_smart(question: str, model: dict, session=None):
             return ""
         try:
             yaml_content = ""
-            model_temp = load_yaml_model("Training_model.yml")
+            model_temp = load_yaml_model("genie_Training.yml")
             if model_temp:
                 yaml_content = yaml.dump(model_temp, default_flow_style=False)
             
@@ -7926,7 +7927,7 @@ def run_quick_analysis(analysis_key: str):
     }
 
     # Load semantic model from stage or local file
-    model = load_yaml_model("Training_model.yml")
+    model = load_yaml_model("genie_Training.yml")
     
     if not model or "verified_queries" not in model:
         return {"layout": "cortex", "error": "Could not load semantic model or no verified_queries found in YAML"}
@@ -8534,7 +8535,7 @@ def call_cortex_analyst(
     print(f"[TIMING] Starting Cortex SQL gen...")
     yaml_content = ""
     try:
-        model_temp = load_yaml_model("Training_model.yml")
+        model_temp = load_yaml_model("genie_Training.yml")
         if model_temp:
             yaml_content = yaml.dump(model_temp, default_flow_style=False)
     except Exception as e:
