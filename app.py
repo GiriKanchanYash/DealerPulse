@@ -38,7 +38,7 @@ logging.basicConfig(level=logging.INFO)
 #
 # 1. YAML UPDATE ENGINE (integrated from update_semantic.py)
 #    - Auto-syncs Microsoft Fabric views to YAML semantic model
-#    - Detects new VW_* views and adds them automatically
+#    - Detects new vw_* views and adds them automatically
 #
 # 2. YAML ROUTING ENGINE (integrated from yaml_routing_engine.py)
 #    - Builds routing logic dynamically from YAML at startup
@@ -72,7 +72,7 @@ logging.basicConfig(level=logging.INFO)
 #   6. Results cached with question hash
 #
 # Adding New Views:
-#   1. Add VW_NEW_VIEW to Microsoft Fabric
+#   1. Add vw_NEW_VIEW to Microsoft Fabric
 #   2. Run update_semantic.py OR set auto_add_views=True in initialize_app_routing()
 #   3. Run app.py again
 #   4. New view automatically in YAML and routing system
@@ -283,15 +283,15 @@ def _build_keyword_tables_from_yaml(model: dict) -> Dict:
     keyword_tables = {}
     
     defaults = {
-        "unit|volume|sold|sales": ["VW_SALES_VOLUME", "vw_sales_per_product_category"],
-        "margin|profit|profitability|cogs|gross|gpm": ["vw_gross_profit_margin", "VW_DEALER_CONTRIBUTION_MARGIN"],
+        "unit|volume|sold|sales": ["vw_SALES_VOLUME", "vw_sales_per_product_category"],
+        "margin|profit|profitability|cogs|gross|gpm": ["vw_gross_profit_margin", "vw_DEALER_CONTRIBUTION_MARGIN"],
         "growth|revenue|trending|declining": ["vw_dealer_revenue_growth", "vw_gross_profit_margin"],
-        "cash|ccc|working capital|dso|dio|dpo": ["VW_CASH_CONVERSION_CYCLE"],
+        "cash|ccc|working capital|dso|dio|dpo": ["vw_CASH_CONVERSION_CYCLE"],
         "service|repair|turnaround|efficiency": ["vw_average_repair_turnaround_time"],
-        "inventory|stock|backorder|availability|shortage": ["vw_stock_availability_dealer", "VW_BACKORDER_INCIDENCE"],
+        "inventory|stock|backorder|availability|shortage": ["vw_stock_availability_dealer", "vw_BACKORDER_INCIDENCE"],
         "lead time|delivery|fulfillment|order": ["vw_order_lead_time"],
         "cost|expense|spending": ["vw_gross_profit_margin"],
-        "where|located|location|city|state|country|address|postal|map": ["VW_DEALER_LOCATION"],
+        "where|located|location|city|state|country|address|postal|map": ["vw_DEALER_LOCATION"],
     }
     
     for keyword_pattern, tables_list in defaults.items():
@@ -305,16 +305,16 @@ def _build_keyword_tables_from_yaml(model: dict) -> Dict:
 # ============================================================================
 
 def _get_views_from_snowflake(session) -> List[str]:
-    """Fetch list of VW_* views from {Config.FABRIC_DATABASE}.INFORMATION_MART."""
+    """Fetch list of vw_* views from {Config.FABRIC_DATABASE}.INFORMATION_MART (Fabric compatible)."""
     try:
         result = session.sql(
             f"SELECT TABLE_NAME FROM {Config.FABRIC_DATABASE}.INFORMATION_SCHEMA.TABLES "
-            f"WHERE TABLE_SCHEMA = 'INFORMATION_MART' AND TABLE_NAME LIKE 'VW_%' "
+            f"WHERE TABLE_SCHEMA = 'INFORMATION_MART' AND TABLE_NAME LIKE 'vw_%' "
             f"ORDER BY TABLE_NAME"
         ).collect()
         return [row[0] for row in result]
     except Exception as e:
-        logging.warning(f"[SNOWFLAKE] Could not fetch views: {e}")
+        logging.warning(f"[FABRIC] Could not fetch views: {e}")
         return []
 
 
@@ -838,10 +838,10 @@ def _load_ui_config():
 
     try:
         config_paths = [
-            os.path.join(os.path.dirname(__file__), "app_settings.yaml"),
+            os.path.join(os.path.dirname(__file__), "schema_metadata.yaml"),
             os.path.join(os.path.dirname(__file__), "ui_config.yaml"),
             os.path.join(os.getcwd(), "ui_config.yaml"),
-            os.path.join(os.getcwd(), "app_settings.yaml"),
+            os.path.join(os.getcwd(), "schema_metadata.yaml"),
             "ui_config.yaml"
         ]
         
@@ -892,7 +892,7 @@ st.set_page_config(
 # YAML MODEL LOADER - Load semantic model for routing and Cortex
 # ════════════════════════════════════════════════════════════════════════════
 
-def load_yaml_model(yaml_path="app_settings.yaml"):
+def load_yaml_model(yaml_path="schema_metadata.yaml"):
     """
     Load semantic model for Cortex/Genie.
     - Locally/Fabric: tries multiple file paths
@@ -907,7 +907,7 @@ def load_yaml_model(yaml_path="app_settings.yaml"):
         "dealer_model_simplified_06_03_2026.yml",
         "dealer_model.yml",
         "semantic_model.yml",
-        "app_settings.yaml",
+        "schema_metadata.yaml",
     ]
     
     for path in local_paths:
@@ -959,12 +959,12 @@ def _create_fallback_yaml_model() -> Dict:
             {
                 "name": "dealer_location_overview",
                 "question": "Show dealer locations",
-                "sql": "SELECT DEALER_NAME, LOCATION_CITY, LOCATION_STATE, LOCATION_COUNTRY, LOCATION_REGION, LOCATION_POSTAL_CODE, DEALER_TYPE, DEALER_TIER FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_DEALER_LOCATION ORDER BY DEALER_NAME"
+                "sql": "SELECT DEALER_NAME, LOCATION_CITY, LOCATION_STATE, LOCATION_COUNTRY, LOCATION_REGION, LOCATION_POSTAL_CODE, DEALER_TYPE, DEALER_TIER FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_DEALER_LOCATION ORDER BY DEALER_NAME"
             },
             {
                 "name": "dealer_health_scorecard",
                 "question": "Show dealer health",
-                "sql": "SELECT * FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_DEALER_LOCATION LIMIT 10"
+                "sql": "SELECT * FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_DEALER_LOCATION LIMIT 10"
             }
         ]
     }
@@ -983,7 +983,7 @@ def _create_fallback_yaml_model() -> Dict:
 
 # Configuration for YAML update engine
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))  # Get directory where dealerapp.py is
-_YAML_FILENAME = "app_settings.yaml"
+_YAML_FILENAME = "schema_metadata.yaml"
 _YAML_LOCAL_PATH = os.path.join(_SCRIPT_DIR, _YAML_FILENAME)  # Absolute path to YAML file
 
 _SEMANTIC_CONFIG = {
@@ -993,16 +993,16 @@ _SEMANTIC_CONFIG = {
     "yaml_filename":   _YAML_FILENAME,
     "local_output":    _YAML_LOCAL_PATH,  # ✅ ABSOLUTE PATH
     "local_fallback":  _YAML_LOCAL_PATH,  # ✅ ABSOLUTE PATH
-    "view_prefix":     "VW_",
+    "view_prefix":     "vw_",
     "model_name":      "DEALER_KPI_MODEL",
     "model_description": "Semantic model for Dealer KPIs - Sales, Performance, Cash Management",
     "core_kpi_tables": [
         ("vw_gross_profit_margin", "m"),
         ("vw_dealer_revenue_growth", "r"),
-        ("VW_CASH_CONVERSION_CYCLE", "c"),
+        ("vw_CASH_CONVERSION_CYCLE", "c"),
         ("vw_average_repair_turnaround_time", "t"),
-        ("VW_DEALER_CONTRIBUTION_MARGIN", "cm"),
-        ("VW_SALES_VOLUME", "v"),
+        ("vw_DEALER_CONTRIBUTION_MARGIN", "cm"),
+        ("vw_SALES_VOLUME", "v"),
     ],
     "numeric_suffixes": (
         "_PCT", "_PERCENT", "_DAYS", "_HOURS", "_AMOUNT", "_RATE",
@@ -1037,12 +1037,15 @@ def _semantic_role(col_name: str, data_type: str) -> str:
     """Determine column type: time_dimension, fact, or dimension."""
     u = col_name.upper()
     dt = data_type.upper()
-    if dt in ("DATE", "TIMESTAMP_NTZ", "TIMESTAMP_LTZ", "TIMESTAMP_TZ", "TIME"):
+    # Handles both Snowflake type names and Fabric/T-SQL type names (datetime2, nvarchar, etc.)
+    if dt in ("DATE", "TIMESTAMP_NTZ", "TIMESTAMP_LTZ", "TIMESTAMP_TZ", "TIME",
+              "DATETIME", "DATETIME2", "SMALLDATETIME", "DATETIMEOFFSET"):
         return "time_dimension"
     for s in _SEMANTIC_CONFIG["time_suffixes"]:
         if u.endswith(s):
             return "time_dimension"
-    if dt in ("NUMBER", "FLOAT", "INT", "INTEGER", "BIGINT", "SMALLINT", "DECIMAL", "NUMERIC", "DOUBLE", "REAL"):
+    if dt in ("NUMBER", "FLOAT", "INT", "INTEGER", "BIGINT", "SMALLINT", "DECIMAL", "NUMERIC",
+              "DOUBLE", "REAL", "MONEY", "SMALLMONEY", "BIT", "TINYINT"):
         for s in _SEMANTIC_CONFIG["dimension_suffixes"]:
             if u.endswith(s):
                 return "dimension"
@@ -1058,7 +1061,7 @@ def _semantic_label(col_name: str) -> str:
 
 def _semantic_human(view_name: str) -> str:
     """Convert view name to human-readable format."""
-    return view_name.replace("VW_", "", 1).replace("_", " ").title()
+    return view_name.replace("vw_", "", 1).replace("_", " ").title()
 
 def _semantic_fingerprint(columns: List[Dict]) -> str:
     """Create hash of column structure for change detection."""
@@ -1066,11 +1069,14 @@ def _semantic_fingerprint(columns: List[Dict]) -> str:
     return hashlib.md5(sig.encode()).hexdigest()
 
 def _semantic_list_views(session, db: str, schema: str, prefix: str) -> List[str]:
-    """Fetch all views matching prefix from Snowflake."""
+    """Fetch all views matching prefix from Microsoft Fabric SQL Endpoint."""
     try:
+        # Microsoft Fabric: INFORMATION_SCHEMA.VIEWS is not supported;
+        # use INFORMATION_SCHEMA.TABLES with TABLE_TYPE = 'VIEW' instead.
         df = session.sql(f"""
-            SELECT TABLE_NAME FROM {db}.INFORMATION_SCHEMA.VIEWS
-            WHERE TABLE_SCHEMA = '{schema}' AND TABLE_NAME LIKE '{prefix}%'
+            SELECT TABLE_NAME FROM {Config.FABRIC_DATABASE}.INFORMATION_SCHEMA.TABLES
+            WHERE TABLE_SCHEMA = '{schema}'
+              AND TABLE_NAME LIKE '{prefix}%'
             ORDER BY TABLE_NAME
         """).to_pandas()
         views = df["TABLE_NAME"].tolist()
@@ -1134,11 +1140,11 @@ def _semantic_build_table_block(view: str, columns: List[Dict], db: str, schema:
 
 def _semantic_build_verified_query(view: str, columns: List[Dict], db: str, schema: str) -> Dict:
     """Build overview and cross-metric verified queries."""
-    tbl = f"{db}.{schema}.{view}"
+    tbl = f"{Config.FABRIC_DATABASE}.INFORMATION_SCHEMA.TABLES"  # Using INFORMATION_SCHEMA.TABLES as a placeholder; replace with actual view reference if needed
     alias = "dl"
     human = _semantic_human(view)
-    qname = view.replace("VW_", "", 1).lower() + "_overview"
-    nw = view.replace("VW_", "").replace("_", " ").lower()
+    qname = view.replace("vw_", "", 1).lower() + "_overview"
+    nw = view.replace("vw_", "").replace("_", " ").lower()
     
     dims = [c for c in columns if _semantic_role(c["name"], c["data_type"]) == "dimension"]
     facts = [c for c in columns if _semantic_role(c["name"], c["data_type"]) == "fact"]
@@ -1168,7 +1174,7 @@ def _semantic_build_verified_query(view: str, columns: List[Dict], db: str, sche
     
     # Cross-metric query
     if has_dealer and view != "vw_gross_profit_margin":
-        cross_name = view.replace("VW_", "", 1).lower() + "_with_performance"
+        cross_name = view.replace("vw_", "", 1).lower() + "_with_performance"
         perf_tbl = f"{db}.{schema}.vw_gross_profit_margin"
         dim_lines = "\n".join(f"    {alias}.{c['name']}," for c in dims)
         fact_lines = ""
@@ -1189,9 +1195,9 @@ def _semantic_build_verified_query(view: str, columns: List[Dict], db: str, sche
 
 def _semantic_build_routing_trigger(view: str, query_name: str) -> Tuple[Dict, List[str]]:
     """Build routing trigger with keywords."""
-    nw = view.replace("VW_", "").replace("_", " ").lower()
+    nw = view.replace("vw_", "").replace("_", " ").lower()
     parts = nw.split()
-    tid = "p9_" + view.replace("VW_", "").lower()
+    tid = "p9_" + view.replace("vw_", "").lower()
     keywords = list(dict.fromkeys([nw, _semantic_human(view).lower(), f"show {nw}"] + 
                     [p for p in parts if len(p) > 3 and p not in ("dealer", "average")]))
     trigger_dict = {
@@ -1349,7 +1355,7 @@ def _semantic_run(cfg: Dict = None) -> Dict:
     # Find new and changed views
     existing_idx = {t["name"]: i for i, t in enumerate(model.get("tables", []))}
     all_views = _semantic_list_views(session, db, schema, prefix)
-    logging.info(f"[SEMANTIC] Found {len(all_views)} VW_* views in Snowflake")
+    logging.info(f"[SEMANTIC] Found {len(all_views)} vw_* views in Snowflake")
     logging.info(f"[SEMANTIC] YAML has {len(existing_idx)} existing tables")
     
     new_views, changed_views = [], []
@@ -1403,7 +1409,7 @@ def _semantic_run(cfg: Dict = None) -> Dict:
         cross_name = vq.get("_cross", {}).get("name") if "_cross" in vq else None
         _semantic_merge_vq(model, vq)
         
-        qname = view.replace("VW_", "", 1).lower() + "_overview"
+        qname = view.replace("vw_", "", 1).lower() + "_overview"
         trigger_dict, keywords = _semantic_build_routing_trigger(view, qname)
         _semantic_merge_trigger(model, trigger_dict)
         _semantic_merge_expert(model, _semantic_build_expert_attr(view, cols))
@@ -1629,7 +1635,7 @@ class GenieQueryCache:
         # Try to get current user if session is available
         if self.session:
             try:
-                self._current_user = self.session.sql("SELECT CURRENT_USER()").collect()[0][0]
+                self._current_user = self.session.sql("SELECT SYSTEM_USER AS CU").collect()[0][0]
             except Exception:
                 self._current_user = "UNKNOWN"
         
@@ -1638,36 +1644,40 @@ class GenieQueryCache:
             self._init_snowflake_table()
     
     def _init_snowflake_table(self):
+        # Microsoft Fabric / SQL Server compatible DDL.
+        # - No UUID_STRING() → use NEWID() for the default primary key.
+        # - No VARIANT → use NVARCHAR(MAX) for JSON storage.
+        # - No TIMESTAMP_NTZ → use DATETIME2.
+        # - No inline DEFAULT on PRIMARY KEY column in CREATE TABLE → separate constraint.
+        # - IF NOT EXISTS is not supported; use the IF OBJECT_ID check pattern.
+        # - No SEARCH OPTIMIZATION syntax → create a normal index instead.
         try:
-            create_table_sql = """
-            CREATE TABLE IF NOT EXISTS {Config.FABRIC_DATABASE}.INFORMATION_MART.GENIE_QUERY_HISTORY (
-                QUERY_ID STRING DEFAULT UUID_STRING() PRIMARY KEY,
-                QUESTION STRING NOT NULL,
-                QUESTION_HASH STRING NOT NULL,
-                RESPONSE_JSON VARIANT NOT NULL,
-                USER_NAME STRING,
-                RESPONSE_TIME_MS FLOAT,
-                CREATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
-                EXPIRES_AT TIMESTAMP_NTZ,
-                HIT_COUNT INT DEFAULT 0,
-                SIMILARITY_SCORE FLOAT
-            );
+            create_table_sql = f"""
+            IF OBJECT_ID(N'{Config.FABRIC_DATABASE}.INFORMATION_MART.GENIE_QUERY_HISTORY', N'U') IS NULL
+            BEGIN
+                CREATE TABLE {Config.FABRIC_DATABASE}.INFORMATION_MART.GENIE_QUERY_HISTORY (
+                    QUERY_ID        UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(),
+                    QUESTION        NVARCHAR(MAX) NOT NULL,
+                    QUESTION_HASH   NVARCHAR(64)  NOT NULL,
+                    RESPONSE_JSON   NVARCHAR(MAX) NOT NULL,
+                    USER_NAME       NVARCHAR(256),
+                    RESPONSE_TIME_MS FLOAT,
+                    CREATED_AT      DATETIME2 DEFAULT GETUTCDATE() NOT NULL,
+                    EXPIRES_AT      DATETIME2,
+                    HIT_COUNT       INT DEFAULT 0,
+                    SIMILARITY_SCORE FLOAT,
+                    CONSTRAINT PK_GENIE_QUERY_HISTORY PRIMARY KEY (QUERY_ID)
+                );
+                CREATE INDEX IX_GENIE_QH_HASH ON
+                    {Config.FABRIC_DATABASE}.INFORMATION_MART.GENIE_QUERY_HISTORY (QUESTION_HASH);
+            END
             """
             self.session.sql(create_table_sql).collect()
-            # Create indexes separately (Snowflake syntax)
-            for idx_sql in [
-                f"ALTER TABLE {Config.FABRIC_DATABASE}.INFORMATION_MART.GENIE_QUERY_HISTORY ADD SEARCH OPTIMIZATION ON EQUALITY(QUESTION_HASH)",
-            ]:
-                try:
-                    self.session.sql(idx_sql).collect()
-                except Exception:
-                    pass  # Search optimization may not be available on all editions
             self.table_initialized = True
             print("[CACHE INIT] GENIE_QUERY_HISTORY table initialized successfully", file=__import__('sys').stderr)
         except Exception as e:
             import traceback
             print(f"[CACHE INIT ERROR] Could not initialize table: {str(e)}", file=__import__('sys').stderr)
-            pass  # silently handle
             traceback.print_exc()
             self.table_initialized = False
     
@@ -1946,12 +1956,13 @@ class GenieQueryCache:
             insert_sql = f"""
                 INSERT INTO {Config.WAREHOUSE_SCHEMA}.GENIE_QUERY_HISTORY
                     (QUESTION, QUESTION_HASH, RESPONSE_JSON, USER_NAME, RESPONSE_TIME_MS)
-                SELECT
+                VALUES (
                     '{q_escaped}',
                     '{q_hash}',
-                    PARSE_JSON('{json_escaped}'),
+                    '{json_escaped}',
                     '{user_escaped}',
                     {float(response_time_ms)}
+                )
             """
             print(f"[CACHE SET] Inserting hash: {q_hash}", file=__import__('sys').stderr)
             self.session.sql(insert_sql).collect()
@@ -1976,7 +1987,7 @@ class GenieQueryCache:
                 MAX(CREATED_AT) as LAST_ASKED,
                 ROUND(AVG(RESPONSE_TIME_MS) * COUNT(*), 0) as TOTAL_TIME_SAVED_MS
             FROM {Config.WAREHOUSE_SCHEMA}.GENIE_QUERY_HISTORY
-            WHERE CREATED_AT >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+            WHERE CREATED_AT >= DATEADD(day, -{days}, GETUTCDATE())
             GROUP BY QUESTION
             ORDER BY FREQUENCY DESC
             LIMIT {limit}
@@ -2001,7 +2012,7 @@ class GenieQueryCache:
                 MAX(RESPONSE_TIME_MS) as MAX_RESPONSE_TIME_MS,
                 ROUND(SUM(RESPONSE_TIME_MS) / 1000.0 / 60.0, 2) as TOTAL_TIME_MINUTES
             FROM {Config.WAREHOUSE_SCHEMA}.GENIE_QUERY_HISTORY
-            WHERE CREATED_AT >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
+            WHERE CREATED_AT >= DATEADD(day, -{days}, GETUTCDATE())
             """
             df = self.session.sql(stats_sql).to_pandas()
             if df.empty:
@@ -2066,7 +2077,7 @@ class GenieLongTermMemory:
 
         if session:
             try:
-                self._user = session.sql("SELECT CURRENT_USER()").collect()[0][0]
+                self._user = session.sql("SELECT SYSTEM_USER AS CU").collect()[0][0]
             except Exception:
                 self._user = "UNKNOWN"
             self._initialized = True
@@ -2092,7 +2103,7 @@ class GenieLongTermMemory:
                         ) AS rn
                     FROM {Config.WAREHOUSE_SCHEMA}.INFORMATION_MART.GENIE_QUERY_HISTORY
                     WHERE USER_NAME = '{user_esc}'
-                    AND CREATED_AT >= DATEADD('day', -30, CURRENT_TIMESTAMP())
+                    AND CREATED_AT >= DATEADD(day, -30, GETUTCDATE())
                 )
                 WHERE rn = 1
                 ORDER BY 1
@@ -2154,12 +2165,9 @@ Examples of good facts:
 
 Respond with facts only, one per line, no bullets:"""
 
-            tdf = self.session.sql(
-                "SELECT SNOWFLAKE.CORTEX.COMPLETE(?, ?) AS RESPONSE",
-                params=[CORTEX_PRESCRIPTIVE_MODEL, extract_prompt],
-            ).to_pandas()
+            df = pd.DataFrame([{"RESPONSE": cortex_complete(extract_prompt, temperature=0.2)}])
 
-            raw = (tdf.at[0, "RESPONSE"] if not tdf.empty else "") or ""
+            raw = (df.at[0, "RESPONSE"] if not df.empty else "") or ""
             raw = raw.strip()
 
             if not raw or raw.upper() == "NONE":
@@ -2231,7 +2239,7 @@ class GenieChatPersistence:
             return
 
         try:
-            self._user = session.sql("SELECT CURRENT_USER()").collect()[0][0]
+            self._user = session.sql("SELECT SYSTEM_USER AS CU").collect()[0][0]
         except Exception:
             pass
 
@@ -2239,21 +2247,24 @@ class GenieChatPersistence:
 
     # ── table bootstrap ───────────────────────────────────────────────────────
     def _init_table(self) -> None:
-        """Create the chat-sessions table if it doesn't exist yet."""
+        """Create the chat-sessions table if it doesn't exist yet (Fabric/T-SQL compatible)."""
         try:
             self.session.sql(f"""
-                CREATE TABLE IF NOT EXISTS {self.TABLE} (
-                    SESSION_ID    STRING        NOT NULL,
-                    USER_NAME     STRING        NOT NULL,
-                    TURN_INDEX    INT           NOT NULL,
-                    ROLE          STRING        NOT NULL,
-                    CONTENT       STRING        NOT NULL,
-                    CREATED_AT    TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP() NOT NULL,
-                    SQL_USED      STRING,
-                    SOURCE        STRING,
-                    SESSION_LABEL STRING,
-                    CONSTRAINT pk_genie_chat PRIMARY KEY (SESSION_ID, TURN_INDEX)
-                )
+                IF OBJECT_ID(N'{self.TABLE}', N'U') IS NULL
+                BEGIN
+                    CREATE TABLE {self.TABLE} (
+                        SESSION_ID    NVARCHAR(128)  NOT NULL,
+                        USER_NAME     NVARCHAR(256)  NOT NULL,
+                        TURN_INDEX    INT            NOT NULL,
+                        ROLE          NVARCHAR(64)   NOT NULL,
+                        CONTENT       NVARCHAR(MAX)  NOT NULL,
+                        CREATED_AT    DATETIME2      NOT NULL DEFAULT GETUTCDATE(),
+                        SQL_USED      NVARCHAR(MAX),
+                        SOURCE        NVARCHAR(256),
+                        SESSION_LABEL NVARCHAR(256),
+                        CONSTRAINT PK_GENIE_CHAT PRIMARY KEY (SESSION_ID, TURN_INDEX)
+                    )
+                END
             """).collect()
             self._table_ok = True
             print("[CHAT PERSIST] Table ready.", file=__import__('sys').stderr)
@@ -2321,8 +2332,8 @@ class GenieChatPersistence:
                     COUNT(*)            AS TURN_COUNT
                 FROM {self.TABLE}
                 WHERE USER_NAME = '{user_esc}'
-                AND   CREATED_AT >= DATEADD('day', -{self.RESTORE_DAYS},
-                                            CURRENT_TIMESTAMP())
+                AND   CREATED_AT >= DATEADD(day, -{self.RESTORE_DAYS},
+                                            GETUTCDATE())
                 GROUP BY SESSION_ID
                 ORDER BY LAST_AT DESC
                 LIMIT 20
@@ -2397,7 +2408,7 @@ class GenieChatPersistence:
         try:
             self.session.sql(f"""
                 DELETE FROM {self.TABLE}
-                WHERE CREATED_AT < DATEADD('day', -{keep_days}, CURRENT_TIMESTAMP())
+                WHERE CREATED_AT < DATEADD(day, -{keep_days}, GETUTCDATE())
             """).collect()
             print(f"[CHAT PERSIST] Purged rows older than {keep_days} days.",
                   file=__import__('sys').stderr)
@@ -2469,7 +2480,7 @@ class DealerPerformanceForecaster:
         SELECT REVENUE
         FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_dealer_revenue_growth
         WHERE DEALER_NAME = '{dealer_name}'
-        AND PERIOD_YEAR >= YEAR(CURRENT_DATE()) - 1
+        AND PERIOD_YEAR >= YEAR(CAST(GETUTCDATE() AS DATE)) - 1
         ORDER BY PERIOD_YEAR DESC
         LIMIT 52
         """
@@ -3393,7 +3404,7 @@ PRESCRIPTIVE: Provide 3–5 specific, prioritized actions. For each action inclu
 PREDICTIVE: Give a short forecast (30–90 days) tied to current metrics, list assumptions, and give a confidence level (Low/Medium/High). Quantify the likely impact where possible (e.g., estimated lost revenue $ or % if no action taken).
 
 STRICT ANALYST RULES FOR SQL GENERATION (APPLY ALWAYS):
-1. ALWAYS use fully-qualified view names in the form: {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_<VIEW_NAME>. Do not use unqualified table names or synonyms.
+1. ALWAYS use fully-qualified view names in the form: {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_<VIEW_NAME>. Do not use unqualified table names or synonyms.
 2. ONLY reference tables that appear in the provided semantic model. If a required table/column is not present, state that explicitly and propose an alternative query using available tables.
 3. NEVER use SELECT * in production queries. Explicitly select needed columns and apply tight filters and limits when returning large result sets.
 4. AGGREGATION SAFETY:
@@ -3405,9 +3416,9 @@ STRICT ANALYST RULES FOR SQL GENERATION (APPLY ALWAYS):
     - Ensure alias uniqueness: do not reuse the same alias for multiple expressions. If you need multiple measures of the same base metric, append a descriptive suffix (e.g., avg_lead_time_30d, avg_lead_time_90d).
     - Avoid ambiguous aliases in ORDER BY / GROUP BY / HAVING; reference the full alias name rather than positional indexes.
 6. JOIN KEYS & PREFERRED JOINS:
-    - Inventory & backorder views: prefer joining on  (vw_stock_availability_dealer.Dealer_name and VW_BACKORDER_INCIDENCE.DEALER_NAME).
-    - Sales and operational metrics: join on `dealer_name` when available (vw_sales_per_product_category, vw_order_lead_time, vw_gross_profit_margin, VW_DEALER_CONTRIBUTION_MARGIN).
-    - Revenue growth and sales volume: join on `dealer_name` (vw_dealer_revenue_growth, VW_SALES_VOLUME).
+    - Inventory & backorder views: prefer joining on  (vw_stock_availability_dealer.Dealer_name and vw_BACKORDER_INCIDENCE.DEALER_NAME).
+    - Sales and operational metrics: join on `dealer_name` when available (vw_sales_per_product_category, vw_order_lead_time, vw_gross_profit_margin, vw_DEALER_CONTRIBUTION_MARGIN).
+    - Revenue growth and sales volume: join on `dealer_name` (vw_dealer_revenue_growth, vw_SALES_VOLUME).
     - Financial efficiency (CCC): prefer `DEALER_NAME` only when `dealer_name`/`DEALER_NAME` is not available across the participating views.
     - Explicitly state which join key is used in the SQL comment and only use a second key when a deterministic mapping is provided in the semantic model.
 7. WINDOW & CTE PATTERN:
@@ -3439,7 +3450,7 @@ EXAMPLES (Follow these patterns exactly):
     ),
     backorder AS (
       SELECT dealer_name, AVG(BACKORDER_INCIDENCE_PCT) AS avg_backorder
-      FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_BACKORDER_INCIDENCE
+      FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_BACKORDER_INCIDENCE
       GROUP BY dealer_name
     )
     SELECT s.dealer_name, s.DEALER_NAME, s.avg_stock_avail, COALESCE(b.avg_backorder,0) AS avg_backorder
@@ -3484,7 +3495,7 @@ def get_snowflake_connection():
 @st.cache_data(ttl=7200)  # Cache for 2 hours instead of 1 for better performance
 def load_semantic_model():
     """Load the semantic model from the local Fabric training file."""
-    return load_yaml_model("app_settings.yaml")
+    return load_yaml_model("schema_metadata.yaml")
 
 
 _local_semantic_cache = None
@@ -3494,7 +3505,7 @@ def _load_local_semantic_model():
     if _local_semantic_cache is not None:
         return _local_semantic_cache
     try:
-        _local_semantic_cache = load_yaml_model("app_settings.yaml")
+        _local_semantic_cache = load_yaml_model("schema_metadata.yaml")
         return _local_semantic_cache
     except Exception:
         st.error("Failed to load local semantic model.")
@@ -3554,7 +3565,7 @@ def validate_view_schemas(_session):
             pass  # silently handle — no user-facing warning
     
     if missing_columns:
-        st.error("**Schema Mismatch**: Please ensure Snowflake views have been updated with the new columns")
+        st.error("**Schema Mismatch**: Please ensure Microsoft Fabric views have been updated with the new columns")
         for view, cols in missing_columns.items():
             st.error(f"  - {view} missing: {', '.join(cols)}")
         return False
@@ -3575,8 +3586,8 @@ def fetch_dealer_health_scores(_session, filters=None):
         dealer_col_margin = get_expr_column('vw_gross_profit_margin', 'dealer_name')
         dealer_col_tat = get_expr_column('vw_average_repair_turnaround_time', 'dealer_name')
         dealer_col_lead = get_expr_column('vw_order_lead_time', 'dealer_name')
-        dealer_col_ccc = get_expr_column('VW_CASH_CONVERSION_CYCLE', 'dealer_name')
-        dealer_name_ccc = get_expr_column('VW_CASH_CONVERSION_CYCLE', 'DEALER_NAME')
+        dealer_col_ccc = get_expr_column('vw_CASH_CONVERSION_CYCLE', 'dealer_name')
+        dealer_name_ccc = get_expr_column('vw_CASH_CONVERSION_CYCLE', 'DEALER_NAME')
 
         # Query margin WITHOUT COALESCE (removes NULL distortion)
         try:
@@ -3639,7 +3650,7 @@ def fetch_dealer_health_scores(_session, filters=None):
         try:
             name_df = _session.sql(f"""
                 SELECT DISTINCT {dealer_col_ccc} AS dealer_name, {dealer_name_ccc} AS DEALER_NAME
-                FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_CASH_CONVERSION_CYCLE
+                FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_CASH_CONVERSION_CYCLE
                 WHERE {dealer_col_ccc} IS NOT NULL AND {dealer_name_ccc} IS NOT NULL
             """).to_pandas()
             name_df.columns = [c.lower() for c in name_df.columns]
@@ -3901,7 +3912,7 @@ def fetch_sales_vs_target(_session, filters=None):
 @st.cache_data(ttl=3600)
 def fetch_strategic_insights(_session):
     """Fetch strategic insights data"""
-    # If VW_STRATEGIC_INSIGHTS view exists, use it; otherwise return mock insights
+    # If vw_STRATEGIC_INSIGHTS view exists, use it; otherwise return mock insights
     try:
         query = """
         SELECT 
@@ -3909,7 +3920,7 @@ def fetch_strategic_insights(_session):
             PRIORITY_LEVEL,
             DEALER_COUNT,
             IMPACT_PERCENTAGE
-        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_STRATEGIC_INSIGHTS
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_STRATEGIC_INSIGHTS
         ORDER BY PRIORITY_LEVEL DESC
         """
         return run_df(query).to_pandas()
@@ -3936,7 +3947,7 @@ def generate_kpi_alerts(_session, filters=None):
     }
 
     # Optional: build WHERE filters if you need date/region scoping
-    # Example: where_clause = "AND ORDER_DATE >= DATEADD('day', -90, CURRENT_DATE)"
+    # Example: where_clause = "AND ORDER_DATE >= DATEADD(day, -90, CURRENT_DATE)"
     where_clause = ""  # fill if needed
 
     try:
@@ -3944,7 +3955,7 @@ def generate_kpi_alerts(_session, filters=None):
         try:
             ccc_df = _session.sql(f"""
                 SELECT DEALER_NAME, AVG(CCC) AS ccc_val
-                FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_CASH_CONVERSION_CYCLE
+                FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_CASH_CONVERSION_CYCLE
                 WHERE CCC IS NOT NULL {where_clause}
                 GROUP BY DEALER_NAME
             """).to_pandas()
@@ -4052,7 +4063,7 @@ def generate_kpi_alerts(_session, filters=None):
         try:
             backorder_df = _session.sql(f"""
                 SELECT DEALER_NAME, AVG(BACKORDER_INCIDENCE_PCT) AS backorder_val
-                FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_BACKORDER_INCIDENCE
+                FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_BACKORDER_INCIDENCE
                 WHERE BACKORDER_INCIDENCE_PCT IS NOT NULL {where_clause}
                 GROUP BY DEALER_NAME
             """).to_pandas()
@@ -4128,11 +4139,11 @@ def fetch_attention_items(_session, filters=None):
 
 @st.cache_data(ttl=3600)
 def fetch_dealers(_session):
-    """Fetch list of dealer names from VW_CASH_CONVERSION_CYCLE."""
+    """Fetch list of dealer names from vw_CASH_CONVERSION_CYCLE."""
     try:
         query = """
         SELECT DISTINCT DEALER_NAME
-        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_CASH_CONVERSION_CYCLE
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_CASH_CONVERSION_CYCLE
         WHERE DEALER_NAME IS NOT NULL
         ORDER BY DEALER_NAME
         """
@@ -4150,7 +4161,7 @@ def fetch_cash_conversion_cycle(_session, filters=None):
         query = """
         SELECT 
             AVG(CCC) AS ccc_days
-        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_CASH_CONVERSION_CYCLE
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_CASH_CONVERSION_CYCLE
         WHERE 1=1
         """
         if filters and 'dealer' in filters and filters['dealer'] != 'All Dealers':
@@ -4327,7 +4338,7 @@ def fetch_sales_volume(_session, filters=None):
             query = f"""
             SELECT 
                 SUM(UNITS_SOLD) AS total_units_sold
-            FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_SALES_VOLUME
+            FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_SALES_VOLUME
             WHERE DEALER_NAME = '{filters['dealer']}'
             """
             if filters and 'from_date' in filters and 'to_date' in filters:
@@ -4338,7 +4349,7 @@ def fetch_sales_volume(_session, filters=None):
             query = """
             SELECT 
                 AVG(UNITS_SOLD) AS avg_units_sold
-            FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_SALES_VOLUME
+            FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_SALES_VOLUME
             WHERE 1=1
             """
         result = run_df(query).to_pandas()
@@ -4358,7 +4369,7 @@ def fetch_contribution_margin(_session, filters=None):
         query = """
         SELECT 
             AVG(CONTRIBUTION_MARGIN_PCT) AS contribution_margin_pct
-        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_DEALER_CONTRIBUTION_MARGIN
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_DEALER_CONTRIBUTION_MARGIN
         WHERE 1=1
         """
         if filters and 'dealer' in filters and filters['dealer'] != 'All Dealers':
@@ -4381,7 +4392,7 @@ def fetch_backorder_incidence(_session, filters=None):
         query = """
         SELECT 
             AVG(BACKORDER_INCIDENCE_PCT) AS backorder_incidence_pct
-        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_BACKORDER_INCIDENCE
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_BACKORDER_INCIDENCE
         WHERE 1=1
         """
         if filters and 'dealer' in filters and filters['dealer'] != 'All Dealers':
@@ -4432,7 +4443,7 @@ def lineage_filter_clause(filters):
 def fetch_journey_counts(_session, filters=None):
     """
     Returns a 1-row DataFrame with aggregate counts computed from
-    VW_TRANSACTION_LINEAGE using the same filters as the detailed
+    vw_TRANSACTION_LINEAGE using the same filters as the detailed
     transaction table.  This guarantees the counts bar stays perfectly
     in sync with whatever the grid is showing (including support for
     individual TRANSACTION_ID selections).
@@ -4445,7 +4456,7 @@ def fetch_journey_counts(_session, filters=None):
 
         # reuse the exact same WHERE logic as fetch_transaction_lineage
         where_clause = f"WHERE ORDER_DATE BETWEEN '{from_date_str}' AND '{to_date_str}'"
-        where_clause += dealer_filter_clause('VW_TRANSACTION_LINEAGE', filters)
+        where_clause += dealer_filter_clause('vw_TRANSACTION_LINEAGE', filters)
         where_clause += lineage_filter_clause(filters)
 
         df = _session.sql(f"""
@@ -4464,7 +4475,7 @@ def fetch_journey_counts(_session, filters=None):
                          ELSE LEAD_TIME_DAYS
                     END
                 ), 1)                                                     AS AVG_LEAD_DAYS
-            FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_TRANSACTION_LINEAGE
+            FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_TRANSACTION_LINEAGE
             {where_clause}
         """).to_pandas()
 
@@ -4495,7 +4506,7 @@ def fetch_journey_counts(_session, filters=None):
 @st.cache_data(ttl=60)
 def fetch_transaction_lineage(_session, filters=None, page=None, page_size=None):
     """
-    Returns paginated rows from VW_TRANSACTION_LINEAGE with columns:
+    Returns paginated rows from vw_TRANSACTION_LINEAGE with columns:
     TRANSACTION_ID, DEALER_NAME, ORDER_DATE, ORDER_DONE, DELIVERY_DONE,
     INVOICE_DONE, WARRANTY_STATUS
     Falls back to empty DataFrame so UI still renders.
@@ -4511,7 +4522,7 @@ def fetch_transaction_lineage(_session, filters=None, page=None, page_size=None)
 
         # build dynamic WHERE clause using helpers
         where_clause = f"WHERE ORDER_DATE BETWEEN '{from_date_str}' AND '{to_date_str}'"
-        where_clause += dealer_filter_clause("VW_TRANSACTION_LINEAGE", filters)
+        where_clause += dealer_filter_clause("vw_TRANSACTION_LINEAGE", filters)
         where_clause += lineage_filter_clause(filters)
 
         offset = (page - 1) * page_size
@@ -4534,7 +4545,7 @@ def fetch_transaction_lineage(_session, filters=None, page=None, page_size=None)
             INVOICE_STATUS,
             WARRANTY_END_DATE,
             WARRANTY_STATUS
-        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_TRANSACTION_LINEAGE
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_TRANSACTION_LINEAGE
         {where_clause}
         ORDER BY ORDER_DATE DESC
         LIMIT {page_size} OFFSET {offset}
@@ -5176,7 +5187,7 @@ def _pick_chart_columns(df):
 
 
 def _cortex_complete_prescriptive(content: list, run_df_func, question: str, session=None) -> str:
-    """Use SNOWFLAKE.CORTEX.COMPLETE to generate business-driven prescriptive insights from query data."""
+    """Use cortex_complete (Azure OpenAI via llm_service) to generate business-driven prescriptive insights from query data."""
     data_parts = []
     for block in content or []:
         if block.get("type") != "sql":
@@ -5209,10 +5220,7 @@ def _cortex_complete_prescriptive(content: list, run_df_func, question: str, ses
     if not session:
         return ""
     try:
-        result = session.sql(
-            "SELECT SNOWFLAKE.CORTEX.COMPLETE(?, ?) AS RESPONSE",
-            params=[CORTEX_PRESCRIPTIVE_MODEL, prompt]
-        ).to_pandas()
+        result = pd.DataFrame([{"RESPONSE": cortex_complete(prompt, temperature=0.2)}])
         if not result.empty and "RESPONSE" in result.columns:
             text = result.at[0, "RESPONSE"]
             if text and isinstance(text, str) and len(text.strip()) > 20:
@@ -5304,10 +5312,7 @@ def _generate_descriptive_predictive_for_quick(question: str, vendors_df, metric
     
     if session:
         try:
-            result = session.sql(
-                "SELECT SNOWFLAKE.CORTEX.COMPLETE(?, ?) AS RESPONSE",
-                params=[CORTEX_PRESCRIPTIVE_MODEL, prompt]
-            ).to_pandas()
+            result = pd.DataFrame([{"RESPONSE": cortex_complete(prompt, temperature=0.2)}])
             
             if not result.empty and "RESPONSE" in result.columns:
                 text = result.at[0, "RESPONSE"]
@@ -5516,7 +5521,7 @@ def render_kpi_metrics(session, filters):
     # Validate view schemas first
     if not validate_view_schemas(session):
         st.error("""
-        **Required Action**: You need to update the Snowflake views to match the new schema.
+        **Required Action**: You need to update the Microsoft Fabric views to match the new schema.
         
         The views must include these columns:
         - DEALER_NAME (string)
@@ -5859,7 +5864,7 @@ def render_attention_and_priority(session, filters):
     # Sales volume per dealer
     _sv_map = _batch(f"""
         SELECT DEALER_NAME, SUM(UNITS_SOLD) AS V
-        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_SALES_VOLUME
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_SALES_VOLUME
         WHERE UNITS_SOLD IS NOT NULL
           AND PERIOD_START_DATE >= '{fd_str}' AND PERIOD_START_DATE <= '{td_str}'
         GROUP BY DEALER_NAME
@@ -5887,7 +5892,7 @@ def render_attention_and_priority(session, filters):
     # Backorder per dealer
     _bo_map = _batch(f"""
         SELECT DEALER_NAME, AVG(BACKORDER_INCIDENCE_PCT) AS V
-        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_BACKORDER_INCIDENCE
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_BACKORDER_INCIDENCE
         WHERE BACKORDER_INCIDENCE_PCT IS NOT NULL
           AND PERIOD_START_DATE >= '{fd_str}' AND PERIOD_START_DATE <= '{td_str}'
         GROUP BY DEALER_NAME
@@ -5896,7 +5901,7 @@ def render_attention_and_priority(session, filters):
     # CCC per dealer
     _ccc_map = _batch(f"""
         SELECT DEALER_NAME, AVG(CCC) AS V
-        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_CASH_CONVERSION_CYCLE
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_CASH_CONVERSION_CYCLE
         WHERE CCC IS NOT NULL
           AND PERIOD_MONTH >= DATE_TRUNC('MONTH', '{fd_str}'::DATE)
           AND PERIOD_MONTH <= DATE_TRUNC('MONTH', '{td_str}'::DATE)
@@ -5916,7 +5921,7 @@ def render_attention_and_priority(session, filters):
     # Contribution margin per dealer
     _cm_map = _batch(f"""
         SELECT DEALER_NAME, AVG(CONTRIBUTION_MARGIN_PCT) AS V
-        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_DEALER_CONTRIBUTION_MARGIN
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_DEALER_CONTRIBUTION_MARGIN
         WHERE CONTRIBUTION_MARGIN_PCT IS NOT NULL
           AND PERIOD_START_DATE >= '{fd_str}' AND PERIOD_START_DATE <= '{td_str}'
         GROUP BY DEALER_NAME
@@ -6279,7 +6284,7 @@ def fetch_cash_conversion_cycle_trend(_session):
             AVG(DIO) AS DIO,
             AVG(DPO) AS DPO,
             AVG(CCC) AS CCC
-        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_CASH_CONVERSION_CYCLE
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_CASH_CONVERSION_CYCLE
         WHERE DEALER_NAME IS NOT NULL
         GROUP BY DEALER_NAME
         ORDER BY CCC DESC
@@ -6969,10 +6974,7 @@ def _cortex_complete_prescriptive(content_blocks, run_df_fn, q_text: str, sessio
             f"{q_text}\n"
             "Keep it short and specific."
         )
-        tdf = session.sql(
-            "SELECT SNOWFLAKE.CORTEX.COMPLETE(?, ?) AS RESPONSE",
-            params=[CORTEX_PRESCRIPTIVE_MODEL, prompt],
-        ).to_pandas()
+        tdf = pd.DataFrame([{"RESPONSE": cortex_complete(prompt, temperature=0.2)}])
         out = (tdf.at[0, "RESPONSE"] if not tdf.empty else "") or ""
         return out.strip() if out.strip() else None
     except Exception:
@@ -6998,7 +7000,7 @@ def run_df(sqlstr: str) -> pd.DataFrame:
     try:
         if not sqlstr or not sqlstr.strip():
             return pd.DataFrame()
-        # Ensure VW_* table names are fully qualified before execution
+        # Ensure vw_* table names are fully qualified before execution
         sqlstr = _qualify_sql_table_names(sqlstr)
         sess = get_active_session()
         return sess.sql(sqlstr).to_pandas()
@@ -7307,7 +7309,7 @@ def route_verified_query_smart(question: str, model: dict, session=None):
             return ""
         try:
             yaml_content = ""
-            model_temp = load_yaml_model("app_settings.yaml")
+            model_temp = load_yaml_model("schema_metadata.yaml")
             if model_temp:
                 yaml_content = yaml.dump(model_temp, default_flow_style=False)
             
@@ -7318,10 +7320,7 @@ Question: {user_question}
 Available schema and column definitions:
 {yaml_content[:2000]}
 """
-            df = session.sql(
-                "SELECT SNOWFLAKE.CORTEX.COMPLETE(?, ?) AS SQL_QUERY",
-                params=[CORTEX_PRESCRIPTIVE_MODEL, combined_prompt],
-            ).to_pandas()
+            df = pd.DataFrame([{"SQL_QUERY": cortex_complete(combined_prompt, temperature=0.2)}])
             
             raw = (df.at[0, "SQL_QUERY"] if not df.empty else "") or ""
             sql = extract_first_select_sql(raw)
@@ -7512,15 +7511,15 @@ def _build_minimal_schema(question: str, model: dict) -> str:
    # If no dynamic mapping available, use fallback defaults
     if not keyword_tables:
         keyword_tables = {
-            "unit|volume|sold|sales": ["VW_SALES_VOLUME", "vw_sales_per_product_category"],
-            "margin|profit|profitability|cogs|gross|gpm": ["vw_gross_profit_margin", "VW_DEALER_CONTRIBUTION_MARGIN"],
+            "unit|volume|sold|sales": ["vw_SALES_VOLUME", "vw_sales_per_product_category"],
+            "margin|profit|profitability|cogs|gross|gpm": ["vw_gross_profit_margin", "vw_DEALER_CONTRIBUTION_MARGIN"],
             "growth|revenue|trending|declining": ["vw_dealer_revenue_growth", "vw_gross_profit_margin"],
-            "cash|ccc|working capital|dso|dio|dpo": ["VW_CASH_CONVERSION_CYCLE"],
+            "cash|ccc|working capital|dso|dio|dpo": ["vw_CASH_CONVERSION_CYCLE"],
             "service|repair|turnaround|efficiency": ["vw_average_repair_turnaround_time"],
-            "inventory|stock|backorder|availability|shortage": ["vw_stock_availability_dealer", "VW_BACKORDER_INCIDENCE"],
+            "inventory|stock|backorder|availability|shortage": ["vw_stock_availability_dealer", "vw_BACKORDER_INCIDENCE"],
             "lead time|delivery|fulfillment|order": ["vw_order_lead_time"],
             "cost|expense|spending": ["vw_gross_profit_margin"],
-            "where|located|location|city|state|country|address|postal|map": ["VW_DEALER_LOCATION"],
+            "where|located|location|city|state|country|address|postal|map": ["vw_DEALER_LOCATION"],
         }
     
     # Collect relevant table names
@@ -7532,8 +7531,8 @@ def _build_minimal_schema(question: str, model: dict) -> str:
     # If no keyword match, include 10 most common tables
     if not relevant_tables:
         relevant_tables = {
-            "VW_SALES_VOLUME", "vw_gross_profit_margin", "vw_dealer_revenue_growth",
-            "vw_average_repair_turnaround_time", "VW_CASH_CONVERSION_CYCLE"
+            "vw_SALES_VOLUME", "vw_gross_profit_margin", "vw_dealer_revenue_growth",
+            "vw_average_repair_turnaround_time", "vw_CASH_CONVERSION_CYCLE"
         }
     
     # Build schema with only relevant tables - ULTRA CLEAR FORMAT WITH EXACT COLUMN NAMES
@@ -7631,16 +7630,16 @@ def is_sql_obviously_bad(sql: str) -> Tuple[bool, str]:
 
 def _qualify_sql_table_names(sql: str) -> str:
     """
-    Ensure all VW_* table names in FROM/JOIN clauses are fully qualified as
-    {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_*. This fixes 'Object DEALER not found' errors
+    Ensure all vw_* table names in FROM/JOIN clauses are fully qualified as
+    {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_*. This fixes 'Object DEALER not found' errors
     that occur when Cortex generates unqualified or partially-qualified table names.
     """
     DB_SCHEMA = f"{Config.FABRIC_DATABASE}.INFORMATION_MART"
 
-    # Known VW_ views — pattern matches any VW_ prefixed name
-    VW_PATTERN = re.compile(
+    # Known vw_ views — pattern matches any vw_ prefixed name
+    vw_PATTERN = re.compile(
         r'(?<![.\w])'                        # not preceded by dot or word char
-        r'(VW_[A-Z0-9_]+)',                  # capture VW_* table name
+        r'(vw_[A-Z0-9_]+)',                  # capture vw_* table name
         re.IGNORECASE
     )
 
@@ -7655,12 +7654,12 @@ def _qualify_sql_table_names(sql: str) -> str:
         return f"{DB_SCHEMA}.{tbl}"
 
     # Walk through FROM / JOIN clauses and qualify table refs
-    # Strategy: use regex to find VW_ tokens not already prefixed with schema
+    # Strategy: use regex to find vw_ tokens not already prefixed with schema
     result = []
     i = 0
     sql_upper = sql.upper()
     while i < len(sql):
-        m = VW_PATTERN.search(sql, i)
+        m = vw_PATTERN.search(sql, i)
         if not m:
             result.append(sql[i:])
             break
@@ -7682,7 +7681,7 @@ def compile_check_sql(session, sql: str) -> Tuple[bool, Optional[str]]:
     t0 = time_module.time()
     try:
         sql_clean = (sql or "").strip().rstrip(";")
-        # Auto-qualify any unqualified VW_* table names before checking
+        # Auto-qualify any unqualified vw_* table names before checking
         sql_clean = _qualify_sql_table_names(sql_clean)
         print(f"[TIMING] Starting EXPLAIN compile check...")
         print(f"[SQL DEBUG] Checking SQL:\n{sql_clean[:400]}")  # Log first 400 chars
@@ -7740,7 +7739,7 @@ def generate_sql_with_cortex(session, cortex_model: str, question: str, yaml_con
     t2 = time_module.time()
     print(f"[TIMING] Schema building: {t2-t1:.2f}s")
 
-    prompt = f"""You are a Snowflake SQL expert for dealer analytics. You MUST generate EXACT, VALID SQL.
+    prompt = f"""You are a Microsoft Fabric T-SQL expert for dealer analytics. You MUST generate EXACT, VALID SQL.
 
 Question: {question}
 
@@ -7750,21 +7749,21 @@ CRITICAL RULES - FOLLOW THESE EXACTLY OR SQL WILL FAIL
 
 1. TABLE NAMES (for FROM/JOIN):
    - vw_average_repair_turnaround_time (alias: t)
-   - VW_DEALER_CONTRIBUTION_MARGIN (alias: cm) 
+   - vw_DEALER_CONTRIBUTION_MARGIN (alias: cm) 
    - vw_gross_profit_margin (alias: gpm or m)
-   - VW_CASH_CONVERSION_CYCLE (alias: ccc or c)
+   - vw_CASH_CONVERSION_CYCLE (alias: ccc or c)
    - vw_order_lead_time (alias: lead or l)
-   - VW_BACKORDER_INCIDENCE (alias: b)
+   - vw_BACKORDER_INCIDENCE (alias: b)
    - vw_stock_availability_dealer (alias: s)
    - vw_dealer_revenue_growth (alias: rg)
-   - VW_SALES_VOLUME (alias: sv)
+   - vw_SALES_VOLUME (alias: sv)
 
 2. EXACT COLUMN NAMES - USE THESE EXACTLY:
    vw_average_repair_turnaround_time:
    ✓ DEALER_NAME, PERIOD_YEAR, PERIOD_MONTH, AVG_TURNAROUND_HOURS
    ✗ DO NOT use: AVG_HOURS (WRONG), TURNAROUND_TIME (WRONG)
    
-   VW_DEALER_CONTRIBUTION_MARGIN:
+   vw_DEALER_CONTRIBUTION_MARGIN:
    ✓ DEALER_NAME, PERIOD_YEAR, PERIOD_MONTH, CONTRIBUTION_MARGIN_PCT
    ✗ DO NOT use: MARGIN (WRONG), CONTRIB_MARGIN (WRONG)
    
@@ -7772,11 +7771,11 @@ CRITICAL RULES - FOLLOW THESE EXACTLY OR SQL WILL FAIL
    ✓ DEALER_NAME, GROSS_PROFIT_MARGIN_PCT, TOTAL_REVENUE, PERIOD_YEAR, PERIOD_MONTH
    ✗ DO NOT use: MARGIN_PCT (WRONG), GPM (WRONG - column name, not abbreviation)
    
-   VW_CASH_CONVERSION_CYCLE:
+   vw_CASH_CONVERSION_CYCLE:
    ✓ DEALER_NAME, DSO, DIO, DPO, CCC, PERIOD_YEAR, PERIOD_MONTH
    ✗ DO NOT use: CASH_CYCLE (WRONG), DAYS_OUTSTANDING (WRONG)
    
-   VW_BACKORDER_INCIDENCE:
+   vw_BACKORDER_INCIDENCE:
    ✓ DEALER_NAME, BACKORDER_INCIDENCE_PCT, PERIOD_YEAR, PERIOD_MONTH
    ✗ DO NOT use: BACKORDER_RATE (WRONG), BACKORDER_PERCENT (WRONG)
    
@@ -7808,7 +7807,7 @@ CRITICAL RULES - FOLLOW THESE EXACTLY OR SQL WILL FAIL
    ✓ WITH service_agg AS (SELECT DEALER_NAME, AVG(AVG_TURNAROUND_HOURS) as avg_hours 
                            FROM vw_average_repair_turnaround_time GROUP BY DEALER_NAME),
         margin_agg AS (SELECT DEALER_NAME, AVG(CONTRIBUTION_MARGIN_PCT) as avg_margin 
-                       FROM VW_DEALER_CONTRIBUTION_MARGIN GROUP BY DEALER_NAME)
+                       FROM vw_DEALER_CONTRIBUTION_MARGIN GROUP BY DEALER_NAME)
       SELECT s.DEALER_NAME, s.avg_hours, m.avg_margin 
       FROM service_agg s LEFT JOIN margin_agg m ON s.DEALER_NAME = m.DEALER_NAME
    
@@ -7834,7 +7833,7 @@ SELECT
   cm.DEALER_NAME,
   cm.CONTRIBUTION_MARGIN_PCT,
   t.AVG_TURNAROUND_HOURS
-FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_DEALER_CONTRIBUTION_MARGIN cm
+FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_DEALER_CONTRIBUTION_MARGIN cm
 LEFT JOIN {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_average_repair_turnaround_time t 
   ON cm.DEALER_NAME = t.DEALER_NAME
 LIMIT 100;
@@ -7842,7 +7841,7 @@ LIMIT 100;
 EXAMPLE 2 - CORRECT MULTI-TABLE WITH CTE:
 WITH margin_data AS (
   SELECT m.DEALER_NAME, AVG(m.CONTRIBUTION_MARGIN_PCT) as avg_margin
-  FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_DEALER_CONTRIBUTION_MARGIN m
+  FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_DEALER_CONTRIBUTION_MARGIN m
   GROUP BY m.DEALER_NAME
 ),
 service_data AS (
@@ -7870,16 +7869,13 @@ REMEMBER: Every SELECT must use qualified table.column format with aliases. Neve
     try:
         print(f"[TIMING] About to call Cortex API...")
         t3 = time_module.time()
-        df = session.sql(
-            "SELECT SNOWFLAKE.CORTEX.COMPLETE(?, ?) AS SQL_QUERY",
-            params=[cortex_model, prompt],
-        ).to_pandas()
+        df = pd.DataFrame([{"SQL_QUERY": cortex_complete(prompt, temperature=0.2)}])
         t4 = time_module.time()
         print(f"[TIMING] Cortex API call: {t4-t3:.2f}s")
 
         raw = (df.at[0, "SQL_QUERY"] if not df.empty else "") or ""
         sql = extract_first_select_sql(raw)
-        # Auto-qualify any unqualified VW_* table names to prevent Object 'DEALER' errors
+        # Auto-qualify any unqualified vw_* table names to prevent Object 'DEALER' errors
         sql = _qualify_sql_table_names(sql)
         print(f"[TIMING] SQL extracted: {len(sql):.0f} chars")
         print(f"[SQL DEBUG] Generated SQL:\n{sql}")  # Print full SQL
@@ -7927,7 +7923,7 @@ def run_quick_analysis(analysis_key: str):
     }
 
     # Load semantic model from stage or local file
-    model = load_yaml_model("app_settings.yaml")
+    model = load_yaml_model("schema_metadata.yaml")
     
     if not model or "verified_queries" not in model:
         return {"layout": "cortex", "error": "Could not load semantic model or no verified_queries found in YAML"}
@@ -8017,10 +8013,7 @@ Respond with THREE sections (ONLY these headers and content, no extra text):
             # Get Snowflake session to call Cortex
             session = get_snowflake_connection()
             t_text = time_module.time()
-            tdf = session.sql(
-                "SELECT SNOWFLAKE.CORTEX.COMPLETE(?, ?) AS RESPONSE",
-                params=[CORTEX_PRESCRIPTIVE_MODEL, cortex_prompt],
-            ).to_pandas()
+            tdf = pd.DataFrame([{"RESPONSE": cortex_complete(cortex_prompt, temperature=0.2)}])
             text_summary = (tdf.at[0, "RESPONSE"] if not tdf.empty else "") or ""
             print(f"[TEXT GEN] Generated text summary in {time_module.time() - t_text:.2f}s")
         except Exception as e:
@@ -8168,10 +8161,7 @@ def _offtopic_response(query: str, intent: str, session, cortex_model: str) -> D
         )
 
     try:
-        tdf = session.sql(
-            "SELECT SNOWFLAKE.CORTEX.COMPLETE(?, ?) AS RESPONSE",
-            params=[cortex_model, prompt],
-        ).to_pandas()
+        tdf = pd.DataFrame([{"RESPONSE": cortex_complete(prompt, temperature=0.2)}])
         response_text = (tdf.at[0, "RESPONSE"] if not tdf.empty else "") or ""
     except Exception:
         # Fallback static responses if Cortex call fails
@@ -8348,10 +8338,7 @@ def call_cortex_analyst(
         )
 
         try:
-            tdf = session.sql(
-                "SELECT SNOWFLAKE.CORTEX.COMPLETE(?, ?) AS RESPONSE",
-                params=[CORTEX_PRESCRIPTIVE_MODEL, prompt],
-            ).to_pandas()
+            tdf = pd.DataFrame([{"RESPONSE": cortex_complete(prompt, temperature=0.2)}])
 
             response_text    = (tdf.at[0, "RESPONSE"] if not tdf.empty else "") or ""
             response_time_ms = (time_module.time() - t_start) * 1000
@@ -8450,10 +8437,7 @@ def call_cortex_analyst(
                         f"Financial outcomes and improvements."
                     )
                     t_text = time_module.time()
-                    tdf    = session.sql(
-                        "SELECT SNOWFLAKE.CORTEX.COMPLETE(?, ?) AS RESPONSE",
-                        params=[CORTEX_PRESCRIPTIVE_MODEL, cortex_prompt],
-                    ).to_pandas()
+                    tdf = pd.DataFrame([{"RESPONSE": cortex_complete(cortex_prompt, temperature=0.2)}])
                     text_summary = (tdf.at[0, "RESPONSE"] if not tdf.empty else "") or ""
                     print(f"[TEXT GEN] {time_module.time()-t_text:.2f}s")
                 except Exception as e:
@@ -8505,10 +8489,7 @@ def call_cortex_analyst(
         )
 
         try:
-            tdf = session.sql(
-                "SELECT SNOWFLAKE.CORTEX.COMPLETE(?, ?) AS RESPONSE",
-                params=[CORTEX_PRESCRIPTIVE_MODEL, prompt],
-            ).to_pandas()
+            tdf = pd.DataFrame([{"RESPONSE": cortex_complete(prompt, temperature=0.2)}])
 
             response_text    = (tdf.at[0, "RESPONSE"] if not tdf.empty else "") or ""
             response_time_ms = (time_module.time() - t_start) * 1000
@@ -8535,7 +8516,7 @@ def call_cortex_analyst(
     print(f"[TIMING] Starting Cortex SQL gen...")
     yaml_content = ""
     try:
-        model_temp = load_yaml_model("app_settings.yaml")
+        model_temp = load_yaml_model("schema_metadata.yaml")
         if model_temp:
             yaml_content = yaml.dump(model_temp, default_flow_style=False)
     except Exception as e:
@@ -8574,10 +8555,7 @@ def call_cortex_analyst(
                         f"**Predictive** - Expected Impact 12-24 months (1-2 sentences)"
                     )
                     t_text = time_module.time()
-                    tdf    = session.sql(
-                        "SELECT SNOWFLAKE.CORTEX.COMPLETE(?, ?) AS RESPONSE",
-                        params=[CORTEX_PRESCRIPTIVE_MODEL, cortex_prompt],
-                    ).to_pandas()
+                    tdf = pd.DataFrame([{"RESPONSE": cortex_complete(cortex_prompt, temperature=0.2)}])
                     text_summary = (tdf.at[0, "RESPONSE"] if not tdf.empty else "") or ""
                     print(f"[TEXT GEN] {time_module.time()-t_text:.2f}s")
                 except Exception as e:
@@ -8642,10 +8620,7 @@ def call_cortex_analyst(
     )
 
     try:
-        tdf = session.sql(
-            "SELECT SNOWFLAKE.CORTEX.COMPLETE(?, ?) AS RESPONSE",
-            params=[CORTEX_PRESCRIPTIVE_MODEL, prompt],
-        ).to_pandas()
+        tdf = pd.DataFrame([{"RESPONSE": cortex_complete(prompt, temperature=0.2)}])
 
         response_text    = (tdf.at[0, "RESPONSE"] if not tdf.empty else "") or ""
         response_time_ms = (time_module.time() - t_start) * 1000
@@ -8943,7 +8918,7 @@ def generate_forecast_prediction_text(session, dealer_name: str, forecast_result
             # Get cash conversion cycle for liquidity insight
             ccc_query = f"""
             SELECT AVG(CASH_CONVERSION_CYCLE_DAYS) as avg_ccc
-            FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_CASH_CONVERSION_CYCLE
+            FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_CASH_CONVERSION_CYCLE
             WHERE DEALER_NAME = '{dealer_name}'
             LIMIT 12
             """
@@ -8998,10 +8973,7 @@ Format: Clear business language, no technical jargon. Be specific with numbers w
         
         try:
             # Use COMPLETE API with proper upper-case column naming
-            result = session.sql(
-                "SELECT SNOWFLAKE.CORTEX.COMPLETE(?, ?) AS RESPONSE",
-                params=["mistral-7b", prediction_prompt],
-            ).to_pandas()
+            result = pd.DataFrame([{"RESPONSE": cortex_complete(prediction_prompt, temperature=0.2)}])
             
             if not result.empty and "RESPONSE" in result.columns:
                 prediction_text = result.at[0, "RESPONSE"]
@@ -9299,8 +9271,7 @@ Respond with THREE sections (ONLY these headers, no extra text):
 **Prescriptive** - Recommendations (5-7 bullet points starting with •)
 **Predictive** - Expected Impact in 12-24 months (1-2 sentences)"""
                 _sess        = get_snowflake_connection()
-                tdf          = _sess.sql("SELECT SNOWFLAKE.CORTEX.COMPLETE(?, ?) AS RESPONSE",
-                                         params=[CORTEX_PRESCRIPTIVE_MODEL, cortex_prompt]).to_pandas()
+                tdf = pd.DataFrame([{"RESPONSE": cortex_complete(cortex_prompt, temperature=0.2)}])
                 text_summary = (tdf.at[0, "RESPONSE"] if not tdf.empty else "") or ""
                 response["text_summary"] = text_summary
             except Exception as e:
@@ -9403,8 +9374,8 @@ Respond with THREE sections (ONLY these headers, no extra text):
             try:
                 cache.session.sql(f"""INSERT INTO {Config.FABRIC_DATABASE}.INFORMATION_MART.GENIE_QUERY_HISTORY
                     (QUESTION,QUESTION_HASH,RESPONSE_JSON,USER_NAME,RESPONSE_TIME_MS)
-                    SELECT 'TEST QUESTION','testhash123',
-                    TRY_PARSE_JSON('{"test":true}'),CURRENT_USER(),100.0""").collect()
+                    VALUES ('TEST QUESTION','testhash123',
+                    '{{"test":true}}',SYSTEM_USER,100.0)""").collect()
                 st.success("✅ Direct INSERT succeeded!")
             except Exception as e:
                 st.error(f"❌ FAILED: {type(e).__name__}: {str(e)[:300]}")
@@ -9801,15 +9772,12 @@ Respond with THREE sections (ONLY these headers, no extra text):
                 try:
                     with st.spinner("Summarizing conversation..."):
                         _sess = get_snowflake_connection()
-                        tdf   = _sess.sql(
-                            "SELECT SNOWFLAKE.CORTEX.COMPLETE(?, ?) AS R",
-                            params=[
-                                CORTEX_PRESCRIPTIVE_MODEL,
-                                f"Summarize this dealer analytics conversation in 4-5 bullet points. "
-                                f"Keep key findings, dealer names, and important numbers:\n\n"
-                                f"{transcript[:3000]}"
-                            ]
-                        ).to_pandas()
+                        _summary_prompt = (
+                            f"Summarize this dealer analytics conversation in 4-5 bullet points. "
+                            f"Keep key findings, dealer names, and important numbers:\n\n"
+                            f"{transcript[:3000]}"
+                        )
+                        tdf = pd.DataFrame([{"R": cortex_complete(_summary_prompt, temperature=0.2)}])
                         summary = (tdf.at[0, "R"] if not tdf.empty else "") or \
                                 "Previous conversation summarized."
                 except Exception:
@@ -10458,9 +10426,9 @@ def render_transaction_lineage(session, filters=None):
         try:
             df_tx = session.sql(f"""
                 SELECT DISTINCT TRANSACTION_ID
-                FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_TRANSACTION_LINEAGE
+                FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_TRANSACTION_LINEAGE
                 WHERE 1=1
-                {dealer_filter_clause('VW_TRANSACTION_LINEAGE', base_filters)}
+                {dealer_filter_clause('vw_TRANSACTION_LINEAGE', base_filters)}
                 {lineage_filter_clause(base_filters)}
                 AND ORDER_DATE BETWEEN '{from_date_str}' AND '{to_date_str}'
                 ORDER BY TRANSACTION_ID
@@ -10474,7 +10442,7 @@ def render_transaction_lineage(session, filters=None):
         try:
             df_inv = session.sql(f"""
                 SELECT DISTINCT INVOICE_STATUS
-                FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_TRANSACTION_LINEAGE
+                FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_TRANSACTION_LINEAGE
                 WHERE INVOICE_STATUS IS NOT NULL
                 ORDER BY INVOICE_STATUS
                 LIMIT 50
@@ -10576,7 +10544,7 @@ def render_transaction_lineage(session, filters=None):
         where_clause = " AND ".join(where_clauses)
         total_rows = session.sql(f"""
             SELECT COUNT(*) AS total
-            FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_TRANSACTION_LINEAGE
+            FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_TRANSACTION_LINEAGE
             WHERE {where_clause}
         """).to_pandas()['TOTAL'][0]
         total_pages = max(1, (total_rows + page_size - 1) // page_size)
@@ -11860,7 +11828,7 @@ def render_dealer_life_cycle(session):
         # ---------------------------------------------------------------
         # Step 8: Sales Volume — category-aware
         # If category selected → use vw_sales_per_product_category
-        # If no category     → use VW_SALES_VOLUME (all products)
+        # If no category     → use vw_SALES_VOLUME (all products)
         # ---------------------------------------------------------------
         def _fetch_sales_volume_inline(f_dict):
             try:
@@ -11886,14 +11854,14 @@ def render_dealer_life_cycle(session):
                           AND TOTAL_QUANTITY IS NOT NULL
                     """
                 else:
-                    # No category → query VW_SALES_VOLUME (all units)
+                    # No category → query vw_SALES_VOLUME (all units)
                     date_cl = (
                         f"PERIOD_START_DATE >= '{fd}' AND PERIOD_START_DATE <= '{td}'"
                         if fd and td else "1=1"
                     )
                     q = f"""
                         SELECT SUM(COALESCE(UNITS_SOLD, 0)) AS V
-                        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_SALES_VOLUME
+                        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_SALES_VOLUME
                         WHERE {dealer_cl}
                           AND {date_cl}
                     """
@@ -11945,7 +11913,7 @@ def render_dealer_life_cycle(session):
                 else:
                     q = f"""
                         SELECT SUM(COALESCE(UNITS_SOLD, 0)) AS V
-                        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_SALES_VOLUME
+                        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_SALES_VOLUME
                         WHERE {dealer_cl}
                           AND {date_cl}
                     """
@@ -12028,7 +11996,7 @@ def render_dealer_life_cycle(session):
                     date_clause_bo = f"PERIOD_START_DATE >= '{fd}' AND PERIOD_START_DATE <= '{td}'"
                 q = f"""
                     SELECT AVG(BACKORDER_INCIDENCE_PCT) AS V
-                    FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_BACKORDER_INCIDENCE
+                    FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_BACKORDER_INCIDENCE
                     WHERE {dealer_clause_bo}
                       AND {date_clause_bo}
                       AND BACKORDER_INCIDENCE_PCT IS NOT NULL
@@ -12111,7 +12079,7 @@ def render_dealer_life_cycle(session):
                     )
                 q = f"""
                     SELECT AVG(CCC) AS V
-                    FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_CASH_CONVERSION_CYCLE
+                    FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_CASH_CONVERSION_CYCLE
                     WHERE {dealer_clause_ccc}
                       AND {date_clause_ccc}
                       AND CCC IS NOT NULL
@@ -12192,7 +12160,7 @@ def render_dealer_life_cycle(session):
                     date_clause_cm = f"PERIOD_START_DATE >= '{fd}' AND PERIOD_START_DATE <= '{td}'"
                 q = f"""
                     SELECT AVG(CONTRIBUTION_MARGIN_PCT) AS V
-                    FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_DEALER_CONTRIBUTION_MARGIN
+                    FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_DEALER_CONTRIBUTION_MARGIN
                     WHERE {dealer_clause_cm}
                       AND {date_clause_cm}
                       AND CONTRIBUTION_MARGIN_PCT IS NOT NULL
@@ -12661,32 +12629,27 @@ def check_required_views(session):
     ]
 
     try:
-        current_db = Config.FABRIC_DATABASE or session.sql("SELECT CURRENT_DATABASE()").collect()[0][0]
+        current_db = Config.FABRIC_DATABASE or session.sql("SELECT DB_NAME() AS CD").collect()[0][0]
     except Exception:
         current_db = Config.FABRIC_DATABASE
 
     try:
+        # Fabric SQL Endpoint: INFORMATION_SCHEMA.VIEWS is not supported.
+        # Use INFORMATION_SCHEMA.TABLES with TABLE_TYPE = 'VIEW'.
         views_df = session.sql(f"""
             SELECT TABLE_NAME
-            FROM {current_db}.INFORMATION_SCHEMA.VIEWS
+            FROM {current_db}.INFORMATION_SCHEMA.TABLES
             WHERE TABLE_SCHEMA = 'INFORMATION_MART'
+              AND TABLE_TYPE = 'VIEW'
         """).to_pandas()
     except Exception:
-        try:
-            views_df = session.sql(f"""
-                SELECT TABLE_NAME
-                FROM {current_db}.INFORMATION_SCHEMA.TABLES
-                WHERE TABLE_SCHEMA = 'INFORMATION_MART'
-                  AND TABLE_TYPE = 'VIEW'
-            """).to_pandas()
-        except Exception:
-            # If metadata lookup fails, do not block startup with a false negative.
-            logging.warning(
-                "[VIEW CHECK] Could not inspect INFORMATION_SCHEMA for %s.INFORMATION_MART; "
-                "skipping hard validation",
-                current_db,
-            )
-            return []
+        # If metadata lookup fails, do not block startup with a false negative.
+        logging.warning(
+            "[VIEW CHECK] Could not inspect INFORMATION_SCHEMA for %s.INFORMATION_MART; "
+            "skipping hard validation",
+            current_db,
+        )
+        return []
 
     available_views = {
         str(name).strip().lower()
@@ -12989,7 +12952,7 @@ def render_replenishment_agent(session):
     try:
         dealers_df = session.sql("""
             SELECT DEALER_NAME, AVG(UNITS_SOLD) AS avg_units
-            FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_SALES_VOLUME
+            FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_SALES_VOLUME
             WHERE DEALER_NAME IS NOT NULL
             GROUP BY DEALER_NAME
             ORDER BY DEALER_NAME
@@ -13007,7 +12970,7 @@ def render_replenishment_agent(session):
     try:
         prod_df = session.sql("""
             SELECT DISTINCT PRODUCT_CATEGORY
-            FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_SALES_VOLUME
+            FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_SALES_VOLUME
             WHERE PRODUCT_CATEGORY IS NOT NULL
             LIMIT 20
         """).to_pandas()
@@ -13020,7 +12983,7 @@ def render_replenishment_agent(session):
         try:
             prod_df2 = session.sql("""
                 SELECT DISTINCT PRODUCT_CATEGORY
-                FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_TRANSACTION_LINEAGE
+                FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_TRANSACTION_LINEAGE
                 WHERE PRODUCT_CATEGORY IS NOT NULL
                 LIMIT 20
             """).to_pandas()
@@ -13744,7 +13707,7 @@ def render_delivery_tracking_agent(session):
         try:
             dlr_df = session.sql("""
                 SELECT DISTINCT DEALER_NAME
-                FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_TRANSACTION_LINEAGE
+                FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_TRANSACTION_LINEAGE
                 WHERE DEALER_NAME IS NOT NULL ORDER BY DEALER_NAME
             """).to_pandas()
             dealer_options = ["All Dealers"] + dlr_df['DEALER_NAME'].dropna().tolist()
@@ -13801,9 +13764,9 @@ def render_delivery_tracking_agent(session):
         open_df = session.sql(f"""
             SELECT DISTINCT TRANSACTION_ID, DEALER_NAME, PRODUCT_CATEGORY,
                 PRODUCT_DESC, ORDER_DATE, DELIVERY_DATE, LEAD_TIME_DAYS
-            FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_TRANSACTION_LINEAGE
+            FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_TRANSACTION_LINEAGE
             WHERE DELIVERY_FLAG = 'N'
-              AND ORDER_DATE >= DATEADD('day', -{p_scan}, CURRENT_DATE())
+              AND ORDER_DATE >= DATEADD(day, -{p_scan}, CAST(GETUTCDATE() AS DATE))
               {dealer_where}
             ORDER BY ORDER_DATE ASC LIMIT 200
         """).to_pandas()
@@ -13815,7 +13778,7 @@ def render_delivery_tracking_agent(session):
     try:
         lead_df = session.sql(f"""
             SELECT DEALER_NAME, AVG(AVG_LEAD_TIME_DAYS) AS avg_lead
-            FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_DEALER_JOURNEY_COUNTS
+            FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_DEALER_JOURNEY_COUNTS
             WHERE AVG_LEAD_TIME_DAYS IS NOT NULL GROUP BY DEALER_NAME
         """).to_pandas()
         lead_df.columns = lead_df.columns.str.upper()
@@ -14123,10 +14086,7 @@ def render_revenue_recovery_agent(session):
 
     def _ai(prompt: str) -> str:
         try:
-            df = session.sql(
-                "SELECT SNOWFLAKE.CORTEX.COMPLETE(?, ?) AS R",
-                params=[CORTEX_MODEL, prompt[:3500]]
-            ).to_pandas()
+            df = pd.DataFrame([{"R": cortex_complete(prompt, temperature=0.2)}])
             return (df.at[0, "R"] or "").strip() if not df.empty else ""
         except Exception as e:
             return f"[AI unavailable: {str(e)[:80]}]"
@@ -14886,4 +14846,4 @@ def main():
     """, unsafe_allow_html=True)
 
 if __name__ == "__main__":
-    main()   
+    main()
