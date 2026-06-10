@@ -305,12 +305,12 @@ def _build_keyword_tables_from_yaml(model: dict) -> Dict:
 # ============================================================================
 
 def _get_views_from_snowflake(session) -> List[str]:
-    """Fetch list of VW_* views from DEALER.INFORMATION_MART."""
+    """Fetch list of VW_* views from {Config.FABRIC_DATABASE}.INFORMATION_MART."""
     try:
         result = session.sql(
-            "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES "
-            "WHERE TABLE_SCHEMA = 'INFORMATION_MART' AND TABLE_NAME LIKE 'VW_%' "
-            "ORDER BY TABLE_NAME"
+            f"SELECT TABLE_NAME FROM {Config.FABRIC_DATABASE}.INFORMATION_SCHEMA.TABLES "
+            f"WHERE TABLE_SCHEMA = 'INFORMATION_MART' AND TABLE_NAME LIKE 'VW_%' "
+            f"ORDER BY TABLE_NAME"
         ).collect()
         return [row[0] for row in result]
     except Exception as e:
@@ -322,7 +322,7 @@ def _build_table_definition_from_snowflake(session, view_name: str) -> Dict:
     """Build semantic table definition from Snowflake view columns."""
     try:
         result = session.sql(
-            f"SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS "
+            f"SELECT COLUMN_NAME, DATA_TYPE FROM {Config.FABRIC_DATABASE}.INFORMATION_SCHEMA.COLUMNS "
             f"WHERE TABLE_SCHEMA = 'INFORMATION_MART' AND TABLE_NAME = '{view_name}' "
             f"ORDER BY ORDINAL_POSITION"
         ).collect()
@@ -354,7 +354,7 @@ def _build_table_definition_from_snowflake(session, view_name: str) -> Dict:
         
         return {
             "name": view_name,
-            "table": f"DEALER.INFORMATION_MART.{view_name}",
+            "table": f"{Config.FABRIC_DATABASE}.INFORMATION_MART.{view_name}",
             "description": f"Auto-generated table definition for {view_name}",
             "dimensions": dimensions[:15],  # Limit to 15 dimensions
             "facts": facts[:10],             # Limit to 10 facts
@@ -959,12 +959,12 @@ def _create_fallback_yaml_model() -> Dict:
             {
                 "name": "dealer_location_overview",
                 "question": "Show dealer locations",
-                "sql": "SELECT DEALER_NAME, LOCATION_CITY, LOCATION_STATE, LOCATION_COUNTRY, LOCATION_REGION, LOCATION_POSTAL_CODE, DEALER_TYPE, DEALER_TIER FROM DEALER.INFORMATION_MART.VW_DEALER_LOCATION ORDER BY DEALER_NAME"
+                "sql": "SELECT DEALER_NAME, LOCATION_CITY, LOCATION_STATE, LOCATION_COUNTRY, LOCATION_REGION, LOCATION_POSTAL_CODE, DEALER_TYPE, DEALER_TIER FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_DEALER_LOCATION ORDER BY DEALER_NAME"
             },
             {
                 "name": "dealer_health_scorecard",
                 "question": "Show dealer health",
-                "sql": "SELECT * FROM DEALER.INFORMATION_MART.VW_DEALER_LOCATION LIMIT 10"
+                "sql": "SELECT * FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_DEALER_LOCATION LIMIT 10"
             }
         ]
     }
@@ -1640,7 +1640,7 @@ class GenieQueryCache:
     def _init_snowflake_table(self):
         try:
             create_table_sql = """
-            CREATE TABLE IF NOT EXISTS DEALER.INFORMATION_MART.GENIE_QUERY_HISTORY (
+            CREATE TABLE IF NOT EXISTS {Config.FABRIC_DATABASE}.INFORMATION_MART.GENIE_QUERY_HISTORY (
                 QUERY_ID STRING DEFAULT UUID_STRING() PRIMARY KEY,
                 QUESTION STRING NOT NULL,
                 QUESTION_HASH STRING NOT NULL,
@@ -1656,7 +1656,7 @@ class GenieQueryCache:
             self.session.sql(create_table_sql).collect()
             # Create indexes separately (Snowflake syntax)
             for idx_sql in [
-                "ALTER TABLE DEALER.INFORMATION_MART.GENIE_QUERY_HISTORY ADD SEARCH OPTIMIZATION ON EQUALITY(QUESTION_HASH)",
+                f"ALTER TABLE {Config.FABRIC_DATABASE}.INFORMATION_MART.GENIE_QUERY_HISTORY ADD SEARCH OPTIMIZATION ON EQUALITY(QUESTION_HASH)",
             ]:
                 try:
                     self.session.sql(idx_sql).collect()
@@ -1734,7 +1734,7 @@ class GenieQueryCache:
             try:
                 query_sql = """
                 SELECT QUESTION, RESPONSE_JSON, RESPONSE_TIME_MS, CREATED_AT, HIT_COUNT
-                FROM DEALER.INFORMATION_MART.GENIE_QUERY_HISTORY
+                FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.GENIE_QUERY_HISTORY
                 ORDER BY CREATED_AT DESC
                 LIMIT 100
                 """
@@ -1797,7 +1797,7 @@ class GenieQueryCache:
             try:
                 query_sql = f"""
                 SELECT RESPONSE_JSON, RESPONSE_TIME_MS
-                FROM DEALER.INFORMATION_MART.GENIE_QUERY_HISTORY
+                FROM {Config.WAREHOUSE_SCHEMA}.INFORMATION_MART.GENIE_QUERY_HISTORY
                 WHERE QUESTION_HASH = '{q_hash}'
                 ORDER BY CREATED_AT DESC
                 LIMIT 1
@@ -1944,7 +1944,7 @@ class GenieQueryCache:
             json_escaped = json_str.replace("'", "''")
 
             insert_sql = f"""
-                INSERT INTO DEALER.INFORMATION_MART.GENIE_QUERY_HISTORY
+                INSERT INTO {Config.WAREHOUSE_SCHEMA}.GENIE_QUERY_HISTORY
                     (QUESTION, QUESTION_HASH, RESPONSE_JSON, USER_NAME, RESPONSE_TIME_MS)
                 SELECT
                     '{q_escaped}',
@@ -1975,7 +1975,7 @@ class GenieQueryCache:
                 ROUND(AVG(RESPONSE_TIME_MS), 2) as AVG_RESPONSE_TIME_MS,
                 MAX(CREATED_AT) as LAST_ASKED,
                 ROUND(AVG(RESPONSE_TIME_MS) * COUNT(*), 0) as TOTAL_TIME_SAVED_MS
-            FROM DEALER.INFORMATION_MART.GENIE_QUERY_HISTORY
+            FROM {Config.WAREHOUSE_SCHEMA}.GENIE_QUERY_HISTORY
             WHERE CREATED_AT >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
             GROUP BY QUESTION
             ORDER BY FREQUENCY DESC
@@ -2000,7 +2000,7 @@ class GenieQueryCache:
                 MIN(RESPONSE_TIME_MS) as MIN_RESPONSE_TIME_MS,
                 MAX(RESPONSE_TIME_MS) as MAX_RESPONSE_TIME_MS,
                 ROUND(SUM(RESPONSE_TIME_MS) / 1000.0 / 60.0, 2) as TOTAL_TIME_MINUTES
-            FROM DEALER.INFORMATION_MART.GENIE_QUERY_HISTORY
+            FROM {Config.WAREHOUSE_SCHEMA}.GENIE_QUERY_HISTORY
             WHERE CREATED_AT >= DATEADD('day', -{days}, CURRENT_TIMESTAMP())
             """
             df = self.session.sql(stats_sql).to_pandas()
@@ -2090,7 +2090,7 @@ class GenieLongTermMemory:
                             PARTITION BY QUESTION
                             ORDER BY CREATED_AT DESC
                         ) AS rn
-                    FROM DEALER.INFORMATION_MART.GENIE_QUERY_HISTORY
+                    FROM {Config.WAREHOUSE_SCHEMA}.INFORMATION_MART.GENIE_QUERY_HISTORY
                     WHERE USER_NAME = '{user_esc}'
                     AND CREATED_AT >= DATEADD('day', -30, CURRENT_TIMESTAMP())
                 )
@@ -2213,11 +2213,11 @@ class GenieChatPersistence:
     browser session).  On page load the class checks whether the current user
     has an unfinished session from the last 2 days and offers to restore it.
 
-    Table used: DEALER.INFORMATION_MART.GENIE_CHAT_SESSIONS
+    Table used: WH = Config.WAREHOUSE_SCHEMA.GENIE_CHAT_SESSIONS
     (auto-created on first use if it does not exist yet)
     """
 
-    TABLE = "DEALER.INFORMATION_MART.GENIE_CHAT_SESSIONS"
+    TABLE = f"{Config.WAREHOUSE_SCHEMA}.GENIE_CHAT_SESSIONS"
     RESTORE_DAYS = 2          # how far back to look for a previous session
     MAX_TURNS_RESTORE = 40    # max messages to restore (20 user+AI pairs)
 
@@ -2467,7 +2467,7 @@ class DealerPerformanceForecaster:
         
         query = f"""
         SELECT REVENUE
-        FROM DEALER.INFORMATION_MART.VW_DEALER_REVENUE_GROWTH
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_DEALER_REVENUE_GROWTH
         WHERE DEALER_NAME = '{dealer_name}'
         AND PERIOD_YEAR >= YEAR(CURRENT_DATE()) - 1
         ORDER BY PERIOD_YEAR DESC
@@ -2581,7 +2581,7 @@ class AnomalyDetector:
             PERIOD_YEAR,
             PERIOD_MONTH,
             REVENUE
-        FROM DEALER.INFORMATION_MART.VW_DEALER_REVENUE_GROWTH
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_DEALER_REVENUE_GROWTH
         WHERE DEALER_NAME = '{dealer_name}'
             AND REVENUE IS NOT NULL
         ORDER BY PERIOD_YEAR DESC, PERIOD_MONTH DESC
@@ -3376,7 +3376,7 @@ if 'detector' not in st.session_state:
 # ============================================================================
 
 DECISION_SUPPORT_INSTRUCTION = """
-You are a Dealer Performance Analyst AI with programmatic access to the DEALER.INFORMATION_MART schema.
+You are a Dealer Performance Analyst AI with programmatic access to the {Config.FABRIC_DATABASE}.INFORMATION_MART schema.
 
 Purpose: Produce accurate, auditable, and runnable analyses that map directly to views present in the semantic model.
 
@@ -3393,7 +3393,7 @@ PRESCRIPTIVE: Provide 3–5 specific, prioritized actions. For each action inclu
 PREDICTIVE: Give a short forecast (30–90 days) tied to current metrics, list assumptions, and give a confidence level (Low/Medium/High). Quantify the likely impact where possible (e.g., estimated lost revenue $ or % if no action taken).
 
 STRICT ANALYST RULES FOR SQL GENERATION (APPLY ALWAYS):
-1. ALWAYS use fully-qualified view names in the form: DEALER.INFORMATION_MART.VW_<VIEW_NAME>. Do not use unqualified table names or synonyms.
+1. ALWAYS use fully-qualified view names in the form: {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_<VIEW_NAME>. Do not use unqualified table names or synonyms.
 2. ONLY reference tables that appear in the provided semantic model. If a required table/column is not present, state that explicitly and propose an alternative query using available tables.
 3. NEVER use SELECT * in production queries. Explicitly select needed columns and apply tight filters and limits when returning large result sets.
 4. AGGREGATION SAFETY:
@@ -3434,12 +3434,12 @@ EXAMPLES (Follow these patterns exactly):
     <SQL>
     WITH stock AS (
       SELECT dealer_name, DEALER_NAME, AVG(STOCK_AVAILABILITY_PCT) AS avg_stock_avail
-      FROM DEALER.INFORMATION_MART.VW_STOCK_AVAILABILITY_DEALER
+      FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_STOCK_AVAILABILITY_DEALER
       GROUP BY dealer_name, DEALER_NAME
     ),
     backorder AS (
       SELECT dealer_name, AVG(BACKORDER_INCIDENCE_PCT) AS avg_backorder
-      FROM DEALER.INFORMATION_MART.VW_BACKORDER_INCIDENCE
+      FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_BACKORDER_INCIDENCE
       GROUP BY dealer_name
     )
     SELECT s.dealer_name, s.DEALER_NAME, s.avg_stock_avail, COALESCE(b.avg_backorder,0) AS avg_backorder
@@ -3455,7 +3455,7 @@ EXAMPLES (Follow these patterns exactly):
     <SQL>
     WITH avg_lead AS (
       SELECT dealer_name, ROUND(AVG(AVG_ORDER_LEAD_TIME_DAYS),1) AS avg_lead_days
-      FROM DEALER.INFORMATION_MART.VW_ORDER_LEAD_TIME
+      FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_ORDER_LEAD_TIME
       WHERE AVG_ORDER_LEAD_TIME_DAYS IS NOT NULL
       GROUP BY dealer_name
     )
@@ -3545,7 +3545,7 @@ def validate_view_schemas(_session):
     missing_columns = {}
     for view_name, expected_cols in required_views.items():
         try:
-            result = _session.sql(f"SELECT * FROM DEALER.INFORMATION_MART.{view_name} LIMIT 1").to_pandas()
+            result = _session.sql(f"SELECT * FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.{view_name} LIMIT 1").to_pandas()
             actual_cols = [c.upper() for c in result.columns]
             missing = [c for c in expected_cols if c.upper() not in actual_cols]
             if missing:
@@ -3582,7 +3582,7 @@ def fetch_dealer_health_scores(_session, filters=None):
         try:
             margin_df = _session.sql(f"""
                 SELECT {dealer_col_margin} AS dealer_name, AVG(GROSS_PROFIT_MARGIN_PCT) AS MARGIN
-                FROM DEALER.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN
+                FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN
                 WHERE GROSS_PROFIT_MARGIN_PCT IS NOT NULL
                 GROUP BY {dealer_col_margin}
             """).to_pandas()
@@ -3595,7 +3595,7 @@ def fetch_dealer_health_scores(_session, filters=None):
         try:
             tat_df = _session.sql(f"""
                 SELECT {dealer_col_tat} AS dealer_name, AVG(AVG_TURNAROUND_HOURS) AS AVG_TAT
-                FROM DEALER.INFORMATION_MART.VW_AVERAGE_REPAIR_TURNAROUND_TIME
+                FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_AVERAGE_REPAIR_TURNAROUND_TIME
                 GROUP BY {dealer_col_tat}
             """).to_pandas()
             tat_df.columns = tat_df.columns.str.lower()
@@ -3607,7 +3607,7 @@ def fetch_dealer_health_scores(_session, filters=None):
         try:
             lead_df = _session.sql(f"""
                 SELECT {dealer_col_lead} AS dealer_name, AVG(AVG_ORDER_LEAD_TIME_DAYS) AS AVG_LEAD
-                FROM DEALER.INFORMATION_MART.VW_ORDER_LEAD_TIME
+                FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_ORDER_LEAD_TIME
                 GROUP BY {dealer_col_lead}
             """).to_pandas()
             lead_df.columns = lead_df.columns.str.lower()
@@ -3639,7 +3639,7 @@ def fetch_dealer_health_scores(_session, filters=None):
         try:
             name_df = _session.sql(f"""
                 SELECT DISTINCT {dealer_col_ccc} AS dealer_name, {dealer_name_ccc} AS DEALER_NAME
-                FROM DEALER.INFORMATION_MART.VW_CASH_CONVERSION_CYCLE
+                FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_CASH_CONVERSION_CYCLE
                 WHERE {dealer_col_ccc} IS NOT NULL AND {dealer_name_ccc} IS NOT NULL
             """).to_pandas()
             name_df.columns = [c.lower() for c in name_df.columns]
@@ -3790,7 +3790,7 @@ def fetch_order_fulfillment(_session, filters=None, sla_days=7):
         SELECT
             COUNT(*) AS TOTAL,
             SUM(CASE WHEN AVG_ORDER_LEAD_TIME_DAYS <= {int(sla_days)} THEN 1 ELSE 0 END) AS ON_TIME
-        FROM DEALER.INFORMATION_MART.VW_ORDER_LEAD_TIME
+        FROM fa.INFORMATION_MART.VW_ORDER_LEAD_TIME
         WHERE 1=1
         """
         if filters and 'dealer' in filters and filters['dealer'] != 'All Dealers':
@@ -3816,7 +3816,7 @@ def fetch_avg_tat(_session, filters=None):
     try:
         query = """
         SELECT AVG(AVG_TURNAROUND_HOURS) as AVG_TAT
-        FROM DEALER.INFORMATION_MART.VW_AVERAGE_REPAIR_TURNAROUND_TIME
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_AVERAGE_REPAIR_TURNAROUND_TIME
         WHERE 1=1
         """
         if filters and 'dealer' in filters and filters['dealer'] != 'All Dealers':
@@ -3846,7 +3846,7 @@ def fetch_revenue_metrics(_session, filters=None):
         SELECT 
             SUM(TOTAL_REVENUE) as TOTAL_REVENUE,
             AVG(GROSS_PROFIT_MARGIN_PCT) as AVG_MARGIN
-        FROM DEALER.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN
         WHERE 1=1
         """
         if filters and 'dealer' in filters and filters['dealer'] != 'All Dealers':
@@ -3877,7 +3877,7 @@ def fetch_sales_vs_target(_session, filters=None):
         query = """
         SELECT 
             SUM(TOTAL_REVENUE) as TOTAL_REVENUE
-        FROM DEALER.INFORMATION_MART.VW_SALES_PER_PRODUCT_CATEGORY
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_SALES_PER_PRODUCT_CATEGORY
         WHERE 1=1
         """
         if filters and 'dealer' in filters and filters['dealer'] != 'All Dealers':
@@ -3909,7 +3909,7 @@ def fetch_strategic_insights(_session):
             PRIORITY_LEVEL,
             DEALER_COUNT,
             IMPACT_PERCENTAGE
-        FROM DEALER.INFORMATION_MART.VW_STRATEGIC_INSIGHTS
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_STRATEGIC_INSIGHTS
         ORDER BY PRIORITY_LEVEL DESC
         """
         return run_df(query).to_pandas()
@@ -3944,7 +3944,7 @@ def generate_kpi_alerts(_session, filters=None):
         try:
             ccc_df = _session.sql(f"""
                 SELECT DEALER_NAME, AVG(CCC) AS ccc_val
-                FROM DEALER.INFORMATION_MART.VW_CASH_CONVERSION_CYCLE
+                FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_CASH_CONVERSION_CYCLE
                 WHERE CCC IS NOT NULL {where_clause}
                 GROUP BY DEALER_NAME
             """).to_pandas()
@@ -3971,7 +3971,7 @@ def generate_kpi_alerts(_session, filters=None):
         try:
             lead_df = _session.sql(f"""
                 SELECT DEALER_NAME, AVG(AVG_ORDER_LEAD_TIME_DAYS) AS lead_val
-                FROM DEALER.INFORMATION_MART.VW_ORDER_LEAD_TIME
+                FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_ORDER_LEAD_TIME
                 WHERE AVG_ORDER_LEAD_TIME_DAYS IS NOT NULL {where_clause}
                 GROUP BY DEALER_NAME
             """).to_pandas()
@@ -3998,7 +3998,7 @@ def generate_kpi_alerts(_session, filters=None):
         try:
             tat_df = _session.sql(f"""
                 SELECT DEALER_NAME, AVG(AVG_TURNAROUND_HOURS) AS tat_val
-                FROM DEALER.INFORMATION_MART.VW_AVERAGE_REPAIR_TURNAROUND_TIME
+                FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_AVERAGE_REPAIR_TURNAROUND_TIME
                 WHERE AVG_TURNAROUND_HOURS IS NOT NULL {where_clause}
                 GROUP BY DEALER_NAME
             """).to_pandas()
@@ -4025,7 +4025,7 @@ def generate_kpi_alerts(_session, filters=None):
         try:
             stock_df = _session.sql(f"""
                 SELECT DEALER_NAME, AVG(STOCK_AVAILABILITY_PCT) AS stock_val
-                FROM DEALER.INFORMATION_MART.VW_STOCK_AVAILABILITY_DEALER
+                FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_STOCK_AVAILABILITY_DEALER
                 WHERE STOCK_AVAILABILITY_PCT IS NOT NULL {where_clause}
                 GROUP BY DEALER_NAME
             """).to_pandas()
@@ -4052,7 +4052,7 @@ def generate_kpi_alerts(_session, filters=None):
         try:
             backorder_df = _session.sql(f"""
                 SELECT DEALER_NAME, AVG(BACKORDER_INCIDENCE_PCT) AS backorder_val
-                FROM DEALER.INFORMATION_MART.VW_BACKORDER_INCIDENCE
+                FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_BACKORDER_INCIDENCE
                 WHERE BACKORDER_INCIDENCE_PCT IS NOT NULL {where_clause}
                 GROUP BY DEALER_NAME
             """).to_pandas()
@@ -4079,7 +4079,7 @@ def generate_kpi_alerts(_session, filters=None):
         try:
             margin_df = _session.sql(f"""
                 SELECT DEALER_NAME, AVG(GROSS_PROFIT_MARGIN_PCT) AS margin_val
-                FROM DEALER.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN
+                FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN
                 WHERE GROSS_PROFIT_MARGIN_PCT IS NOT NULL {where_clause}
                 GROUP BY DEALER_NAME
             """).to_pandas()
@@ -4132,7 +4132,7 @@ def fetch_dealers(_session):
     try:
         query = """
         SELECT DISTINCT DEALER_NAME
-        FROM DEALER.INFORMATION_MART.VW_CASH_CONVERSION_CYCLE
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_CASH_CONVERSION_CYCLE
         WHERE DEALER_NAME IS NOT NULL
         ORDER BY DEALER_NAME
         """
@@ -4150,7 +4150,7 @@ def fetch_cash_conversion_cycle(_session, filters=None):
         query = """
         SELECT 
             AVG(CCC) AS ccc_days
-        FROM DEALER.INFORMATION_MART.VW_CASH_CONVERSION_CYCLE
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_CASH_CONVERSION_CYCLE
         WHERE 1=1
         """
         if filters and 'dealer' in filters and filters['dealer'] != 'All Dealers':
@@ -4177,7 +4177,7 @@ def fetch_repair_turnaround_time(_session, filters=None):
         query = """
         SELECT 
             AVG(AVG_TURNAROUND_HOURS) AS avg_turnaround_hours
-        FROM DEALER.INFORMATION_MART.VW_AVERAGE_REPAIR_TURNAROUND_TIME
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_AVERAGE_REPAIR_TURNAROUND_TIME
         WHERE 1=1
         """
         if filters and 'dealer' in filters and filters['dealer'] != 'All Dealers':
@@ -4203,7 +4203,7 @@ def fetch_revenue_growth(_session, filters=None):
         query = """
         SELECT 
             AVG(REVENUE_GROWTH_MOM_PERCENT) AS revenue_growth_pct
-        FROM DEALER.INFORMATION_MART.VW_DEALER_REVENUE_GROWTH
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_DEALER_REVENUE_GROWTH
         WHERE 1=1
         """
         if filters and 'dealer' in filters and filters['dealer'] != 'All Dealers':
@@ -4226,7 +4226,7 @@ def fetch_gross_profit_margin(_session, filters=None):
         query = """
         SELECT 
             AVG(GROSS_PROFIT_MARGIN_PCT) AS gross_profit_margin_pct
-        FROM DEALER.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN
         WHERE 1=1
         """
         if filters and 'dealer' in filters and filters['dealer'] != 'All Dealers':
@@ -4249,7 +4249,7 @@ def fetch_sales_per_product_category(_session, filters=None):
         query = """
         SELECT 
             AVG(TOTAL_REVENUE) AS avg_revenue_per_product
-        FROM DEALER.INFORMATION_MART.VW_SALES_PER_PRODUCT_CATEGORY
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_SALES_PER_PRODUCT_CATEGORY
         WHERE 1=1
         """
         if filters and 'dealer' in filters and filters['dealer'] != 'All Dealers':
@@ -4274,7 +4274,7 @@ def fetch_order_lead_time(_session, filters=None):
         query = """
         SELECT 
             AVG(AVG_ORDER_LEAD_TIME_DAYS) AS avg_lead_time
-        FROM DEALER.INFORMATION_MART.VW_ORDER_LEAD_TIME
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_ORDER_LEAD_TIME
         WHERE 1=1
         """
         if filters and 'dealer' in filters and filters['dealer'] != 'All Dealers':
@@ -4303,7 +4303,7 @@ def fetch_stock_availability(_session, filters=None):
         query = """
         SELECT 
             AVG(STOCK_AVAILABILITY_PCT) AS stock_availability_pct
-        FROM DEALER.INFORMATION_MART.VW_STOCK_AVAILABILITY_DEALER
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_STOCK_AVAILABILITY_DEALER
         WHERE 1=1
         """
         if filters and 'dealer' in filters and filters['dealer'] != 'All Dealers':
@@ -4327,7 +4327,7 @@ def fetch_sales_volume(_session, filters=None):
             query = f"""
             SELECT 
                 SUM(UNITS_SOLD) AS total_units_sold
-            FROM DEALER.INFORMATION_MART.VW_SALES_VOLUME
+            FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_SALES_VOLUME
             WHERE DEALER_NAME = '{filters['dealer']}'
             """
             if filters and 'from_date' in filters and 'to_date' in filters:
@@ -4338,7 +4338,7 @@ def fetch_sales_volume(_session, filters=None):
             query = """
             SELECT 
                 AVG(UNITS_SOLD) AS avg_units_sold
-            FROM DEALER.INFORMATION_MART.VW_SALES_VOLUME
+            FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_SALES_VOLUME
             WHERE 1=1
             """
         result = run_df(query).to_pandas()
@@ -4358,7 +4358,7 @@ def fetch_contribution_margin(_session, filters=None):
         query = """
         SELECT 
             AVG(CONTRIBUTION_MARGIN_PCT) AS contribution_margin_pct
-        FROM DEALER.INFORMATION_MART.VW_DEALER_CONTRIBUTION_MARGIN
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_DEALER_CONTRIBUTION_MARGIN
         WHERE 1=1
         """
         if filters and 'dealer' in filters and filters['dealer'] != 'All Dealers':
@@ -4381,7 +4381,7 @@ def fetch_backorder_incidence(_session, filters=None):
         query = """
         SELECT 
             AVG(BACKORDER_INCIDENCE_PCT) AS backorder_incidence_pct
-        FROM DEALER.INFORMATION_MART.VW_BACKORDER_INCIDENCE
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_BACKORDER_INCIDENCE
         WHERE 1=1
         """
         if filters and 'dealer' in filters and filters['dealer'] != 'All Dealers':
@@ -4464,7 +4464,7 @@ def fetch_journey_counts(_session, filters=None):
                          ELSE LEAD_TIME_DAYS
                     END
                 ), 1)                                                     AS AVG_LEAD_DAYS
-            FROM DEALER.INFORMATION_MART.VW_TRANSACTION_LINEAGE
+            FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_TRANSACTION_LINEAGE
             {where_clause}
         """).to_pandas()
 
@@ -4534,7 +4534,7 @@ def fetch_transaction_lineage(_session, filters=None, page=None, page_size=None)
             INVOICE_STATUS,
             WARRANTY_END_DATE,
             WARRANTY_STATUS
-        FROM DEALER.INFORMATION_MART.VW_TRANSACTION_LINEAGE
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_TRANSACTION_LINEAGE
         {where_clause}
         ORDER BY ORDER_DATE DESC
         LIMIT {page_size} OFFSET {offset}
@@ -4566,7 +4566,7 @@ def fetch_regions(_session):
     try:
         query = """
         SELECT DISTINCT REGION
-        FROM DEALER.INFORMATION_MART.VW_DEALER_REVENUE_GROWTH
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_DEALER_REVENUE_GROWTH
         WHERE REGION IS NOT NULL
         ORDER BY REGION
         """
@@ -4585,7 +4585,7 @@ def fetch_products(_session):
     try:
         query = """
         SELECT DISTINCT PRODUCT_CATEGORY
-        FROM DEALER.INFORMATION_MART.VW_SALES_PER_PRODUCT_CATEGORY
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_SALES_PER_PRODUCT_CATEGORY
         WHERE PRODUCT_CATEGORY IS NOT NULL
         ORDER BY PRODUCT_CATEGORY
         """
@@ -5849,7 +5849,7 @@ def render_attention_and_priority(session, filters):
     # Revenue growth per dealer
     _rg_map = _batch(f"""
         SELECT DEALER_NAME, AVG(REVENUE_GROWTH_MOM_PERCENT) AS V
-        FROM DEALER.INFORMATION_MART.VW_DEALER_REVENUE_GROWTH
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_DEALER_REVENUE_GROWTH
         WHERE REVENUE_GROWTH_MOM_PERCENT IS NOT NULL
           AND PERIOD_MONTH >= DATE_TRUNC('MONTH', '{fd_str}'::DATE)
           AND PERIOD_MONTH <= DATE_TRUNC('MONTH', '{td_str}'::DATE)
@@ -5859,7 +5859,7 @@ def render_attention_and_priority(session, filters):
     # Sales volume per dealer
     _sv_map = _batch(f"""
         SELECT DEALER_NAME, SUM(UNITS_SOLD) AS V
-        FROM DEALER.INFORMATION_MART.VW_SALES_VOLUME
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_SALES_VOLUME
         WHERE UNITS_SOLD IS NOT NULL
           AND PERIOD_START_DATE >= '{fd_str}' AND PERIOD_START_DATE <= '{td_str}'
         GROUP BY DEALER_NAME
@@ -5869,7 +5869,7 @@ def render_attention_and_priority(session, filters):
     # Stock availability per dealer
     _sa_map = _batch(f"""
         SELECT DEALER_NAME, AVG(STOCK_AVAILABILITY_PCT) AS V
-        FROM DEALER.INFORMATION_MART.VW_STOCK_AVAILABILITY_DEALER
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_STOCK_AVAILABILITY_DEALER
         WHERE STOCK_AVAILABILITY_PCT IS NOT NULL
           AND PERIOD_START_DATE >= '{fd_str}' AND PERIOD_START_DATE <= '{td_str}'
         GROUP BY DEALER_NAME
@@ -5878,7 +5878,7 @@ def render_attention_and_priority(session, filters):
     # Repair TAT per dealer
     _tat_map = _batch(f"""
         SELECT DEALER_NAME, AVG(AVG_TURNAROUND_HOURS) AS V
-        FROM DEALER.INFORMATION_MART.VW_AVERAGE_REPAIR_TURNAROUND_TIME
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_AVERAGE_REPAIR_TURNAROUND_TIME
         WHERE AVG_TURNAROUND_HOURS IS NOT NULL
           AND PERIOD_START_DATE >= '{fd_str}' AND PERIOD_START_DATE <= '{td_str}'
         GROUP BY DEALER_NAME
@@ -5887,7 +5887,7 @@ def render_attention_and_priority(session, filters):
     # Backorder per dealer
     _bo_map = _batch(f"""
         SELECT DEALER_NAME, AVG(BACKORDER_INCIDENCE_PCT) AS V
-        FROM DEALER.INFORMATION_MART.VW_BACKORDER_INCIDENCE
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_BACKORDER_INCIDENCE
         WHERE BACKORDER_INCIDENCE_PCT IS NOT NULL
           AND PERIOD_START_DATE >= '{fd_str}' AND PERIOD_START_DATE <= '{td_str}'
         GROUP BY DEALER_NAME
@@ -5896,7 +5896,7 @@ def render_attention_and_priority(session, filters):
     # CCC per dealer
     _ccc_map = _batch(f"""
         SELECT DEALER_NAME, AVG(CCC) AS V
-        FROM DEALER.INFORMATION_MART.VW_CASH_CONVERSION_CYCLE
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_CASH_CONVERSION_CYCLE
         WHERE CCC IS NOT NULL
           AND PERIOD_MONTH >= DATE_TRUNC('MONTH', '{fd_str}'::DATE)
           AND PERIOD_MONTH <= DATE_TRUNC('MONTH', '{td_str}'::DATE)
@@ -5906,7 +5906,7 @@ def render_attention_and_priority(session, filters):
     # Gross margin per dealer
     _gm_map = _batch(f"""
         SELECT DEALER_NAME, AVG(GROSS_PROFIT_MARGIN_PCT) AS V
-        FROM DEALER.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN
         WHERE GROSS_PROFIT_MARGIN_PCT IS NOT NULL
           AND PERIOD_MONTH >= DATE_TRUNC('MONTH', '{fd_str}'::DATE)
           AND PERIOD_MONTH <= DATE_TRUNC('MONTH', '{td_str}'::DATE)
@@ -5916,7 +5916,7 @@ def render_attention_and_priority(session, filters):
     # Contribution margin per dealer
     _cm_map = _batch(f"""
         SELECT DEALER_NAME, AVG(CONTRIBUTION_MARGIN_PCT) AS V
-        FROM DEALER.INFORMATION_MART.VW_DEALER_CONTRIBUTION_MARGIN
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_DEALER_CONTRIBUTION_MARGIN
         WHERE CONTRIBUTION_MARGIN_PCT IS NOT NULL
           AND PERIOD_START_DATE >= '{fd_str}' AND PERIOD_START_DATE <= '{td_str}'
         GROUP BY DEALER_NAME
@@ -6216,7 +6216,7 @@ def fetch_revenue_trend(_session):
             PERIOD_YEAR,
             REVENUE,
             PREV_REVENUE
-        FROM DEALER.INFORMATION_MART.VW_DEALER_REVENUE_GROWTH
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_DEALER_REVENUE_GROWTH
         ORDER BY dealer_name, PERIOD_YEAR DESC
         LIMIT 50
         """
@@ -6234,7 +6234,7 @@ def fetch_profit_margin_by_dealer(_session):
             DEALER_NAME,
             AVG(GROSS_PROFIT_MARGIN_PCT) AS GROSS_PROFIT_MARGIN_PCT,
             SUM(TOTAL_REVENUE) AS TOTAL_REVENUE
-        FROM DEALER.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN
         WHERE DEALER_NAME IS NOT NULL
         GROUP BY DEALER_NAME
         ORDER BY GROSS_PROFIT_MARGIN_PCT DESC
@@ -6256,7 +6256,7 @@ def fetch_sales_by_product_category(_session):
             PRODUCT_CATEGORY,
             SUM(TOTAL_REVENUE) AS total_revenue,
             SUM(TOTAL_QUANTITY) AS total_quantity
-        FROM DEALER.INFORMATION_MART.VW_SALES_PER_PRODUCT_CATEGORY
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_SALES_PER_PRODUCT_CATEGORY
         GROUP BY PRODUCT_CATEGORY
         ORDER BY total_revenue DESC
         LIMIT 20
@@ -6279,7 +6279,7 @@ def fetch_cash_conversion_cycle_trend(_session):
             AVG(DIO) AS DIO,
             AVG(DPO) AS DPO,
             AVG(CCC) AS CCC
-        FROM DEALER.INFORMATION_MART.VW_CASH_CONVERSION_CYCLE
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_CASH_CONVERSION_CYCLE
         WHERE DEALER_NAME IS NOT NULL
         GROUP BY DEALER_NAME
         ORDER BY CCC DESC
@@ -6301,7 +6301,7 @@ def fetch_order_lead_time_distribution(_session):
             DEALER_NAME,
             AVG(AVG_ORDER_LEAD_TIME_DAYS) AS avg_lead_time,
             COUNT(*) AS order_count
-        FROM DEALER.INFORMATION_MART.VW_ORDER_LEAD_TIME
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_ORDER_LEAD_TIME
         GROUP BY DEALER_NAME
         ORDER BY avg_lead_time DESC
         LIMIT 10
@@ -7566,7 +7566,7 @@ def _build_minimal_schema(question: str, model: dict) -> str:
             if cols:
                 # ULTRA CLEAR FORMAT: TABLE NAME, then each column on separate line with exact name
                 schema_lines.append(f"\nTABLE: {table_name}")
-                schema_lines.append(f"  Full path: DEALER.INFORMATION_MART.{table_name}")
+                schema_lines.append(f"  Full path: {Config.FABRIC_DATABASE}.INFORMATION_MART.{table_name}")
                 schema_lines.append(f"  Recommended alias: {table_name[:1].lower() if table_name else 't'}")
                 schema_lines.append(f"  Exact column names (copy these exactly, no abbreviations):")
                 for col in cols[:15]:  # Limit but show all realistic columns
@@ -7632,10 +7632,10 @@ def is_sql_obviously_bad(sql: str) -> Tuple[bool, str]:
 def _qualify_sql_table_names(sql: str) -> str:
     """
     Ensure all VW_* table names in FROM/JOIN clauses are fully qualified as
-    DEALER.INFORMATION_MART.VW_*. This fixes 'Object DEALER not found' errors
+    {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_*. This fixes 'Object DEALER not found' errors
     that occur when Cortex generates unqualified or partially-qualified table names.
     """
-    DB_SCHEMA = "DEALER.INFORMATION_MART"
+    DB_SCHEMA = f"{Config.FABRIC_DATABASE}.INFORMATION_MART"
 
     # Known VW_ views — pattern matches any VW_ prefixed name
     VW_PATTERN = re.compile(
@@ -7825,7 +7825,7 @@ SELECT
   t.DEALER_NAME,
   t.AVG_TURNAROUND_HOURS,
   t.PERIOD_YEAR
-FROM DEALER.INFORMATION_MART.VW_AVERAGE_REPAIR_TURNAROUND_TIME t
+FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_AVERAGE_REPAIR_TURNAROUND_TIME t
 ORDER BY t.DEALER_NAME
 LIMIT 100;
 
@@ -7834,20 +7834,20 @@ SELECT
   cm.DEALER_NAME,
   cm.CONTRIBUTION_MARGIN_PCT,
   t.AVG_TURNAROUND_HOURS
-FROM DEALER.INFORMATION_MART.VW_DEALER_CONTRIBUTION_MARGIN cm
-LEFT JOIN DEALER.INFORMATION_MART.VW_AVERAGE_REPAIR_TURNAROUND_TIME t 
+FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_DEALER_CONTRIBUTION_MARGIN cm
+LEFT JOIN {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_AVERAGE_REPAIR_TURNAROUND_TIME t 
   ON cm.DEALER_NAME = t.DEALER_NAME
 LIMIT 100;
 
 EXAMPLE 2 - CORRECT MULTI-TABLE WITH CTE:
 WITH margin_data AS (
   SELECT m.DEALER_NAME, AVG(m.CONTRIBUTION_MARGIN_PCT) as avg_margin
-  FROM DEALER.INFORMATION_MART.VW_DEALER_CONTRIBUTION_MARGIN m
+  FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_DEALER_CONTRIBUTION_MARGIN m
   GROUP BY m.DEALER_NAME
 ),
 service_data AS (
   SELECT s.DEALER_NAME, AVG(s.AVG_TURNAROUND_HOURS) as avg_hours
-  FROM DEALER.INFORMATION_MART.VW_AVERAGE_REPAIR_TURNAROUND_TIME s
+  FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_AVERAGE_REPAIR_TURNAROUND_TIME s
   GROUP BY s.DEALER_NAME
 )
 SELECT 
@@ -8927,7 +8927,7 @@ def generate_forecast_prediction_text(session, dealer_name: str, forecast_result
             # Get margin data for profitability insight
             margin_query = f"""
             SELECT AVG(GROSS_PROFIT_MARGIN_PCT) as avg_margin
-            FROM DEALER.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN
+            FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN
             WHERE DEALER_NAME = '{dealer_name}'
             LIMIT 12
             """
@@ -8943,7 +8943,7 @@ def generate_forecast_prediction_text(session, dealer_name: str, forecast_result
             # Get cash conversion cycle for liquidity insight
             ccc_query = f"""
             SELECT AVG(CASH_CONVERSION_CYCLE_DAYS) as avg_ccc
-            FROM DEALER.INFORMATION_MART.VW_CASH_CONVERSION_CYCLE
+            FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_CASH_CONVERSION_CYCLE
             WHERE DEALER_NAME = '{dealer_name}'
             LIMIT 12
             """
@@ -9401,7 +9401,7 @@ Respond with THREE sections (ONLY these headers, no extra text):
             User: {cache._current_user}</div>""", unsafe_allow_html=True)
         if st.button("Test DB Write", key="test_db_write"):
             try:
-                cache.session.sql("""INSERT INTO DEALER.INFORMATION_MART.GENIE_QUERY_HISTORY
+                cache.session.sql(f"""INSERT INTO {Config.FABRIC_DATABASE}.INFORMATION_MART.GENIE_QUERY_HISTORY
                     (QUESTION,QUESTION_HASH,RESPONSE_JSON,USER_NAME,RESPONSE_TIME_MS)
                     SELECT 'TEST QUESTION','testhash123',
                     TRY_PARSE_JSON('{"test":true}'),CURRENT_USER(),100.0""").collect()
@@ -10458,7 +10458,7 @@ def render_transaction_lineage(session, filters=None):
         try:
             df_tx = session.sql(f"""
                 SELECT DISTINCT TRANSACTION_ID
-                FROM DEALER.INFORMATION_MART.VW_TRANSACTION_LINEAGE
+                FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_TRANSACTION_LINEAGE
                 WHERE 1=1
                 {dealer_filter_clause('VW_TRANSACTION_LINEAGE', base_filters)}
                 {lineage_filter_clause(base_filters)}
@@ -10472,9 +10472,9 @@ def render_transaction_lineage(session, filters=None):
 
         # ── Enhancement 2: fetch distinct invoice_status values ───────────────
         try:
-            df_inv = session.sql("""
+            df_inv = session.sql(f"""
                 SELECT DISTINCT INVOICE_STATUS
-                FROM DEALER.INFORMATION_MART.VW_TRANSACTION_LINEAGE
+                FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_TRANSACTION_LINEAGE
                 WHERE INVOICE_STATUS IS NOT NULL
                 ORDER BY INVOICE_STATUS
                 LIMIT 50
@@ -10576,7 +10576,7 @@ def render_transaction_lineage(session, filters=None):
         where_clause = " AND ".join(where_clauses)
         total_rows = session.sql(f"""
             SELECT COUNT(*) AS total
-            FROM DEALER.INFORMATION_MART.VW_TRANSACTION_LINEAGE
+            FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_TRANSACTION_LINEAGE
             WHERE {where_clause}
         """).to_pandas()['TOTAL'][0]
         total_pages = max(1, (total_rows + page_size - 1) // page_size)
@@ -11755,7 +11755,7 @@ def render_dealer_life_cycle(session):
                     SELECT
                         COUNT(*) AS TOTAL,
                         SUM(CASE WHEN AVG_ORDER_LEAD_TIME_DAYS <= {int(sla_days)} THEN 1 ELSE 0 END) AS ON_TIME
-                    FROM DEALER.INFORMATION_MART.VW_ORDER_LEAD_TIME
+                    FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_ORDER_LEAD_TIME
                     WHERE {w} AND AVG_ORDER_LEAD_TIME_DAYS IS NOT NULL
                 """
                 res = session.sql(q).to_pandas()
@@ -11794,7 +11794,7 @@ def render_dealer_life_cycle(session):
                                  product_col='PRODUCT_CATEGORY' if f_dict.get('product') else None)
                 q = f"""
                     SELECT AVG(STOCK_AVAILABILITY_PCT) AS V
-                    FROM DEALER.INFORMATION_MART.VW_STOCK_AVAILABILITY_DEALER
+                    FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_STOCK_AVAILABILITY_DEALER
                     WHERE {w} AND STOCK_AVAILABILITY_PCT IS NOT NULL
                 """
                 res = session.sql(q).to_pandas()
@@ -11835,7 +11835,7 @@ def render_dealer_life_cycle(session):
                     )
                 q = f"""
                     SELECT AVG(REVENUE_GROWTH_MOM_PERCENT) AS V
-                    FROM DEALER.INFORMATION_MART.VW_DEALER_REVENUE_GROWTH
+                    FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_DEALER_REVENUE_GROWTH
                     WHERE {dealer_clause_rg}
                       AND {date_clause_rg}
                       AND REVENUE_GROWTH_MOM_PERCENT IS NOT NULL
@@ -11879,7 +11879,7 @@ def render_dealer_life_cycle(session):
                     )
                     q = f"""
                         SELECT SUM(COALESCE(TOTAL_QUANTITY, 0)) AS V
-                        FROM DEALER.INFORMATION_MART.VW_SALES_PER_PRODUCT_CATEGORY
+                        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_SALES_PER_PRODUCT_CATEGORY
                         WHERE {dealer_cl}
                           AND {date_cl}
                           AND PRODUCT_CATEGORY = '{cat}'
@@ -11893,7 +11893,7 @@ def render_dealer_life_cycle(session):
                     )
                     q = f"""
                         SELECT SUM(COALESCE(UNITS_SOLD, 0)) AS V
-                        FROM DEALER.INFORMATION_MART.VW_SALES_VOLUME
+                        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_SALES_VOLUME
                         WHERE {dealer_cl}
                           AND {date_cl}
                     """
@@ -11936,7 +11936,7 @@ def render_dealer_life_cycle(session):
                     # Use category-specific quantity as sales proxy
                     q = f"""
                         SELECT SUM(COALESCE(TOTAL_QUANTITY, 0)) AS V
-                        FROM DEALER.INFORMATION_MART.VW_SALES_PER_PRODUCT_CATEGORY
+                        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_SALES_PER_PRODUCT_CATEGORY
                         WHERE {dealer_cl}
                           AND {date_cl}
                           AND PRODUCT_CATEGORY = '{cat}'
@@ -11945,7 +11945,7 @@ def render_dealer_life_cycle(session):
                 else:
                     q = f"""
                         SELECT SUM(COALESCE(UNITS_SOLD, 0)) AS V
-                        FROM DEALER.INFORMATION_MART.VW_SALES_VOLUME
+                        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_SALES_VOLUME
                         WHERE {dealer_cl}
                           AND {date_cl}
                     """
@@ -11988,7 +11988,7 @@ def render_dealer_life_cycle(session):
                     date_clause_lt = f"PERIOD_START_DATE >= '{fd}' AND PERIOD_START_DATE <= '{td}'"
                 q = f"""
                     SELECT AVG(AVG_ORDER_LEAD_TIME_DAYS) AS V
-                    FROM DEALER.INFORMATION_MART.VW_ORDER_LEAD_TIME
+                    FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_ORDER_LEAD_TIME
                     WHERE {dealer_clause_lt}
                       AND {date_clause_lt}
                       AND AVG_ORDER_LEAD_TIME_DAYS IS NOT NULL
@@ -12028,7 +12028,7 @@ def render_dealer_life_cycle(session):
                     date_clause_bo = f"PERIOD_START_DATE >= '{fd}' AND PERIOD_START_DATE <= '{td}'"
                 q = f"""
                     SELECT AVG(BACKORDER_INCIDENCE_PCT) AS V
-                    FROM DEALER.INFORMATION_MART.VW_BACKORDER_INCIDENCE
+                    FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_BACKORDER_INCIDENCE
                     WHERE {dealer_clause_bo}
                       AND {date_clause_bo}
                       AND BACKORDER_INCIDENCE_PCT IS NOT NULL
@@ -12068,7 +12068,7 @@ def render_dealer_life_cycle(session):
                     date_clause_tat = f"PERIOD_START_DATE >= '{fd}' AND PERIOD_START_DATE <= '{td}'"
                 q = f"""
                     SELECT AVG(AVG_TURNAROUND_HOURS) AS V
-                    FROM DEALER.INFORMATION_MART.VW_AVERAGE_REPAIR_TURNAROUND_TIME
+                    FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_AVERAGE_REPAIR_TURNAROUND_TIME
                     WHERE {dealer_clause_tat}
                       AND {date_clause_tat}
                       AND AVG_TURNAROUND_HOURS IS NOT NULL
@@ -12111,7 +12111,7 @@ def render_dealer_life_cycle(session):
                     )
                 q = f"""
                     SELECT AVG(CCC) AS V
-                    FROM DEALER.INFORMATION_MART.VW_CASH_CONVERSION_CYCLE
+                    FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_CASH_CONVERSION_CYCLE
                     WHERE {dealer_clause_ccc}
                       AND {date_clause_ccc}
                       AND CCC IS NOT NULL
@@ -12154,7 +12154,7 @@ def render_dealer_life_cycle(session):
                     )
                 q = f"""
                     SELECT AVG(GROSS_PROFIT_MARGIN_PCT) AS V
-                    FROM DEALER.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN
+                    FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN
                     WHERE {dealer_clause_gm}
                       AND {date_clause_gm}
                       AND GROSS_PROFIT_MARGIN_PCT IS NOT NULL
@@ -12192,7 +12192,7 @@ def render_dealer_life_cycle(session):
                     date_clause_cm = f"PERIOD_START_DATE >= '{fd}' AND PERIOD_START_DATE <= '{td}'"
                 q = f"""
                     SELECT AVG(CONTRIBUTION_MARGIN_PCT) AS V
-                    FROM DEALER.INFORMATION_MART.VW_DEALER_CONTRIBUTION_MARGIN
+                    FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_DEALER_CONTRIBUTION_MARGIN
                     WHERE {dealer_clause_cm}
                       AND {date_clause_cm}
                       AND CONTRIBUTION_MARGIN_PCT IS NOT NULL
@@ -12441,7 +12441,7 @@ def render_dealer_life_cycle(session):
                             PERIOD_MONTH            AS PERIOD_LABEL,
                             SUM(REVENUE)            AS TOTAL_REVENUE,
                             '{series_label}'        AS SERIES
-                        FROM DEALER.INFORMATION_MART.VW_DEALER_REVENUE_GROWTH
+                        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_DEALER_REVENUE_GROWTH
                         WHERE {dealer_clause}
                           AND {date_filter}
                           AND REVENUE IS NOT NULL
@@ -12548,7 +12548,7 @@ def render_dealer_life_cycle(session):
                             PRODUCT_CATEGORY,
                             SUM(TOTAL_REVENUE)  AS TOTAL_REVENUE,
                             SUM(TOTAL_QUANTITY) AS TOTAL_QUANTITY
-                        FROM DEALER.INFORMATION_MART.VW_SALES_PER_PRODUCT_CATEGORY
+                        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_SALES_PER_PRODUCT_CATEGORY
                         WHERE {' AND '.join(parts)}
                         GROUP BY PRODUCT_CATEGORY
                         ORDER BY TOTAL_REVENUE DESC
@@ -12664,7 +12664,7 @@ def check_required_views(session):
 
     for view in required_views:
         try:
-            session.sql(f"SELECT 1 FROM DEALER.INFORMATION_MART.{view} LIMIT 1").collect()
+            session.sql(f"SELECT 1 FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.{view} LIMIT 1").collect()
         except Exception:
             missing.append(view)
 
@@ -12955,7 +12955,7 @@ def render_replenishment_agent(session):
     try:
         dealers_df = session.sql("""
             SELECT DEALER_NAME, AVG(UNITS_SOLD) AS avg_units
-            FROM DEALER.INFORMATION_MART.VW_SALES_VOLUME
+            FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_SALES_VOLUME
             WHERE DEALER_NAME IS NOT NULL
             GROUP BY DEALER_NAME
             ORDER BY DEALER_NAME
@@ -12973,7 +12973,7 @@ def render_replenishment_agent(session):
     try:
         prod_df = session.sql("""
             SELECT DISTINCT PRODUCT_CATEGORY
-            FROM DEALER.INFORMATION_MART.VW_SALES_VOLUME
+            FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_SALES_VOLUME
             WHERE PRODUCT_CATEGORY IS NOT NULL
             LIMIT 20
         """).to_pandas()
@@ -12986,7 +12986,7 @@ def render_replenishment_agent(session):
         try:
             prod_df2 = session.sql("""
                 SELECT DISTINCT PRODUCT_CATEGORY
-                FROM DEALER.INFORMATION_MART.VW_TRANSACTION_LINEAGE
+                FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_TRANSACTION_LINEAGE
                 WHERE PRODUCT_CATEGORY IS NOT NULL
                 LIMIT 20
             """).to_pandas()
@@ -13012,7 +13012,7 @@ def render_replenishment_agent(session):
                 MIN(STOCK_QUANTITY)        AS min_stock,
                 SUM(CASE WHEN STOCK_QUANTITY = 0 THEN 1 ELSE 0 END) AS zero_stock_count,
                 COUNT(*)                   AS total_products
-            FROM DEALER.INFORMATION_MART.VW_STOCK_AVAILABILITY_DEALER
+            FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_STOCK_AVAILABILITY_DEALER
             WHERE DEALER_NAME IS NOT NULL
             GROUP BY DEALER_NAME
         """).to_pandas()
@@ -13710,7 +13710,7 @@ def render_delivery_tracking_agent(session):
         try:
             dlr_df = session.sql("""
                 SELECT DISTINCT DEALER_NAME
-                FROM DEALER.INFORMATION_MART.VW_TRANSACTION_LINEAGE
+                FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_TRANSACTION_LINEAGE
                 WHERE DEALER_NAME IS NOT NULL ORDER BY DEALER_NAME
             """).to_pandas()
             dealer_options = ["All Dealers"] + dlr_df['DEALER_NAME'].dropna().tolist()
@@ -13767,7 +13767,7 @@ def render_delivery_tracking_agent(session):
         open_df = session.sql(f"""
             SELECT DISTINCT TRANSACTION_ID, DEALER_NAME, PRODUCT_CATEGORY,
                 PRODUCT_DESC, ORDER_DATE, DELIVERY_DATE, LEAD_TIME_DAYS
-            FROM DEALER.INFORMATION_MART.VW_TRANSACTION_LINEAGE
+            FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_TRANSACTION_LINEAGE
             WHERE DELIVERY_FLAG = 'N'
               AND ORDER_DATE >= DATEADD('day', -{p_scan}, CURRENT_DATE())
               {dealer_where}
@@ -13779,9 +13779,9 @@ def render_delivery_tracking_agent(session):
         open_df = pd.DataFrame()
 
     try:
-        lead_df = session.sql("""
+        lead_df = session.sql(f"""
             SELECT DEALER_NAME, AVG(AVG_LEAD_TIME_DAYS) AS avg_lead
-            FROM DEALER.INFORMATION_MART.VW_DEALER_JOURNEY_COUNTS
+            FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_DEALER_JOURNEY_COUNTS
             WHERE AVG_LEAD_TIME_DAYS IS NOT NULL GROUP BY DEALER_NAME
         """).to_pandas()
         lead_df.columns = lead_df.columns.str.upper()
@@ -14077,7 +14077,7 @@ def render_delivery_tracking_agent(session):
 def render_revenue_recovery_agent(session):
     """
     Revenue Recovery Agent for DealerPulse.
-    Uses DEALER.INFORMATION_MART views:
+    Uses {Config.FABRIC_DATABASE}.INFORMATION_MART views:
       - VW_DEALER_REVENUE_GROWTH  : DEALER_NAME, PERIOD_YEAR, PERIOD_MONTH, REVENUE, PREV_MONTH_REVENUE, REVENUE_GROWTH_MOM_PERCENT
       - VW_GROSS_PROFIT_MARGIN    : DEALER_NAME, PERIOD_YEAR, PERIOD_MONTH, TOTAL_REVENUE, TOTAL_COGS, GROSS_PROFIT_MARGIN_PCT
       - VW_SALES_PER_PRODUCT_CATEGORY : DEALER_NAME, PRODUCT_CATEGORY, PERIOD_YEAR, PERIOD_MONTH, TOTAL_REVENUE, TOTAL_QUANTITY
@@ -14205,7 +14205,7 @@ def render_revenue_recovery_agent(session):
             _bounds_raw = session.sql(
                 "SELECT MIN(PERIOD_YEAR) AS MIN_YR, MAX(PERIOD_YEAR) AS MAX_YR,"
                 " COUNT(DISTINCT CAST(PERIOD_YEAR AS VARCHAR) || CAST(PERIOD_MONTH AS VARCHAR)) AS TOTAL_PERIODS"
-                " FROM DEALER.INFORMATION_MART.VW_DEALER_REVENUE_GROWTH WHERE REVENUE IS NOT NULL"
+                f" FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_DEALER_REVENUE_GROWTH WHERE REVENUE IS NOT NULL"
             ).to_pandas()
             _bounds_raw.columns = [c.upper() for c in _bounds_raw.columns]
         except Exception as _be:
@@ -14235,7 +14235,7 @@ def render_revenue_recovery_agent(session):
                             ORDER BY PERIOD_YEAR ASC, PERIOD_MONTH ASC
                         ) AS rn,
                         COUNT(*) OVER () AS total_rows
-                    FROM DEALER.INFORMATION_MART.VW_DEALER_REVENUE_GROWTH
+                    FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_DEALER_REVENUE_GROWTH
                     WHERE REVENUE IS NOT NULL
                 ),
                 split AS (
@@ -14330,7 +14330,7 @@ def render_revenue_recovery_agent(session):
                        SUM(TOTAL_REVENUE)           AS TOTAL_REV,
                        SUM(TOTAL_COGS)              AS TOTAL_COGS,
                        COUNT(*)                     AS PERIODS
-                FROM DEALER.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN
+                FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN
                 WHERE DEALER_NAME IN ({names_sql})
                   AND GROSS_PROFIT_MARGIN_PCT IS NOT NULL
                 GROUP BY DEALER_NAME
@@ -14346,7 +14346,7 @@ def render_revenue_recovery_agent(session):
                        PRODUCT_CATEGORY,
                        SUM(TOTAL_REVENUE)  AS CAT_REVENUE,
                        SUM(TOTAL_QUANTITY) AS CAT_QTY
-                FROM DEALER.INFORMATION_MART.VW_SALES_PER_PRODUCT_CATEGORY
+                FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.VW_SALES_PER_PRODUCT_CATEGORY
                 WHERE DEALER_NAME IN ({names_sql})
                 GROUP BY DEALER_NAME, PRODUCT_CATEGORY
                 ORDER BY DEALER_NAME, CAT_REVENUE DESC
@@ -14574,7 +14574,7 @@ def main():
     if session:
         missing_views = check_required_views(session)
         if missing_views:
-            st.error("Missing required data views in DEALER.INFORMATION_MART. The dashboard runs in DB-only mode and cannot proceed without them.")
+            st.error(f"Missing required data views in {Config.FABRIC_DATABASE}.INFORMATION_MART. The dashboard runs in DB-only mode and cannot proceed without them.")
             st.write("Missing views:")
             for v in missing_views:
                 st.write(f"- {v}")
