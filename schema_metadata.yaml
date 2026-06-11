@@ -1,17 +1,14 @@
-# === Auto-updated 2026-06-11 11:52 UTC (integrated) ===
-# Added  : vw_average_repair_turnaround_time, vw_backorder_incidence, vw_cash_conversion_cycle, vw_dealer_contribution_margin, vw_dealer_journey_counts, vw_dealer_revenue_growth, vw_gross_profit_margin, vw_gross_profit_margin_test, vw_order_lead_time, vw_sales_per_product_category, vw_sales_volume, vw_stock_availability_dealer, vw_transaction_lineage
-
 name: DealerPulse_KPI_MODEL
 description: Semantic model for DealerPulse KPIs covering Service Performance, Sales Growth, Cash Conversion Cycle, and Inventory
   Metrics.
 owner: DealerPulse Analytics Team
 created_date: 2026-02-13
 model_quality_warnings: "⚠️ CRITICAL WARNINGS FOR Open AI ANALYST - READ CAREFULLY\n\nVIEW NAMES vs COLUMN NAMES (MOST IMPORTANT):\n\
-  - Names like VW_DealerPulse_CONTRIBUTION_MARGIN, VW_GROSS_PROFIT_MARGIN are TABLE/VIEW names. Use them ONLY in FROM and\
+  - Names like VW_DealerPulse_CONTRIBUTION_MARGIN, vw_gross_profit_margin are TABLE/VIEW names. Use them ONLY in FROM and\
   \ JOIN (e.g. FROM DealerPulse.INFORMATION_MART.VW_DealerPulse_CONTRIBUTION_MARGIN cm).\n- COLUMNS are the attributes defined\
   \ in dimensions and facts for each view (e.g. DealerPulse_NAME, CONTRIBUTION_MARGIN_PCT, GROSS_PROFIT_MARGIN_PCT). Use these\
   \ in SELECT, WHERE, ORDER BY with an alias (e.g. cm.DealerPulse_NAME, cm.CONTRIBUTION_MARGIN_PCT).\n- NEVER use a view name\
-  \ as a column. Writing t.VW_DealerPulse_CONTRIBUTION_MARGIN or alias.VW_GROSS_PROFIT_MARGIN is INVALID and causes \"invalid\
+  \ as a column. Writing t.VW_DealerPulse_CONTRIBUTION_MARGIN or alias.vw_gross_profit_margin is INVALID and causes \"invalid\
   \ identifier\" errors. Only the actual column names (DealerPulse_NAME, CONTRIBUTION_MARGIN_PCT, etc.) are valid.\n\nCortex\
   \ has been generating SQL with these common errors. Every generated query MUST be validated for:\n\n1. AMBIGUOUS JOINS -\
   \ Cortex generates: ON DealerPulse_NAME = DealerPulse_NAME (WRONG)\n  Fix: Always use explicit table aliases: ON t.DealerPulse_NAME\
@@ -434,7 +431,7 @@ semantic_matching_integration:
   - 'RULE 7: Never use CASE statements in GROUP BY - pre-compute in CTE instead'
   - 'RULE 8: Filter early - WHERE clauses in CTEs before aggregation'
   expert_sql_attributes:
-  - 'Know ALL 7 main tables: VW_GROSS_PROFIT_MARGIN (DealerPulse_NAME, TOTAL_REVENUE, TOTAL_COGS, GROSS_PROFIT_MARGIN_PCT,
+  - 'Know ALL 7 main tables: vw_gross_profit_margin (DealerPulse_NAME, TOTAL_REVENUE, TOTAL_COGS, GROSS_PROFIT_MARGIN_PCT,
     PERIOD_YEAR, PERIOD_MONTH)'
   - 'Know service & fulfillment: VW_AVERAGE_REPAIR_TURNAROUND_TIME (DealerPulse_NAME, AVG_TURNAROUND_HOURS, PERIOD_YEAR, PERIOD_MONTH)'
   - 'Know order fulfillment: VW_ORDER_LEAD_TIME (DealerPulse_NAME, AVG_ORDER_LEAD_TIME_DAYS, PERIOD_YEAR, PERIOD_MONTH)'
@@ -445,9 +442,9 @@ semantic_matching_integration:
   - 'Know growth: VW_DealerPulse_REVENUE_GROWTH (DealerPulse_NAME, REVENUE, PREV_MONTH_REVENUE, REVENUE_GROWTH_MOM_PERCENT,
     PERIOD_YEAR, PERIOD_MONTH)'
   - 'Know contribution: VW_DealerPulse_CONTRIBUTION_MARGIN (DealerPulse_NAME, CONTRIBUTION_MARGIN_PCT, PERIOD_YEAR, PERIOD_MONTH)'
-  - 'Know sales detail: VW_SALES_PER_PRODUCT_CATEGORY (DealerPulse_NAME, PRODUCT_CATEGORY, TOTAL_REVENUE, TOTAL_QUANTITY,
+  - 'Know sales detail: vw_sales_per_product_category (DealerPulse_NAME, PRODUCT_CATEGORY, TOTAL_REVENUE, TOTAL_QUANTITY,
     PERIOD_YEAR, PERIOD_MONTH)'
-  - 'Know volume: VW_SALES_VOLUME (DealerPulse_NAME, UNITS_SOLD, PERIOD_YEAR, PERIOD_MONTH)'
+  - 'Know volume: vw_sales_volume  (DealerPulse_NAME, UNITS_SOLD, PERIOD_YEAR, PERIOD_MONTH)'
   - 'Know column relationships: DealerPulse_NAME is universal join key; PERIOD_YEAR, PERIOD_MONTH define time buckets'
   - 'Know aggregation defaults: Most facts use AVG aggregation (hours, days, %), REVENUE/QUANTITY use SUM, MARGIN uses AVG'
   - 'Know data distribution: ~50 DealerPulses; ~12-24 months history; all tables have monthly pre-aggregation'
@@ -639,8 +636,8 @@ join_constraints:
     pattern: FROM DealerPulse.INFORMATION_MART.VW_TABLE_NAME AS <alias>
     violation_pattern: FROM DealerPulse.INFORMATION_MART.VW_TABLE_NAME (missing alias)
     error_message: 'REJECTED: Table reference missing alias. Use: FROM table AS t'
-    example_correct: FROM DealerPulse.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN AS m
-    example_wrong: FROM DealerPulse.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN
+    example_correct: FROM DealerPulse.INFORMATION_MART.vw_gross_profit_margin AS m
+    example_wrong: FROM DealerPulse.INFORMATION_MART.vw_gross_profit_margin
   - rule_id: EXPLICIT_TABLE_QUALIFIED_JOINS
     severity: CRITICAL_ERROR
     rule: ON clauses MUST use table-qualified column names (alias.column_name)
@@ -667,7 +664,7 @@ join_constraints:
       note: These tables share DealerPulse_NAME as primary join key for DealerPulse-level aggregations
     - tables:
       - VW_STOCK_AVAILABILITY_DealerPulse
-      - VW_SALES_PER_PRODUCT_CATEGORY
+      - vw_sales_per_product_category
       join_key: DealerPulse_NAME + PRODUCT_CATEGORY
       note: 'CRITICAL: When joining stock/sales by category, GROUP BY both dimensions first, then aggregate'
       correct_pattern: WITH stock_by_category AS (SELECT DealerPulse_NAME, PRODUCT_CATEGORY, AVG(...) FROM VW_STOCK_AVAILABILITY_DealerPulse
@@ -702,7 +699,7 @@ join_constraints:
     error_type: Ambiguous column reference - violates SQL GROUP BY rules
   - rule_id: PRODUCT_CATEGORY_JOINS
     severity: CRITICAL_ERROR
-    rule: VW_STOCK_AVAILABILITY_DealerPulse and VW_SALES_PER_PRODUCT_CATEGORY have PRODUCT_CATEGORY - must aggregate by category
+    rule: vw_stock_availability_dealerpulse and vw_sales_per_product_category have PRODUCT_CATEGORY - must aggregate by category
       first
     correct_pattern: "WITH product_cat_agg AS (\n  SELECT DealerPulse_NAME, PRODUCT_CATEGORY, AVG(STOCK_AVAILABILITY_PCT)\
       \ as avg_stock FROM VW_STOCK_AVAILABILITY_DealerPulse\n  GROUP BY DealerPulse_NAME, PRODUCT_CATEGORY\n)\n"
@@ -917,7 +914,7 @@ table_join_matrix:
       join_key: DealerPulse_NAME
       join_type: LEFT JOIN
       on_clause: ON dl.DealerPulse_NAME = v.DealerPulse_NAME
-  - primary_table: VW_SALES_PER_PRODUCT_CATEGORY
+  - primary_table: vw_sales_per_product_category
     alias: dl
     description: Auto-generated join rules for Sales Per Product Category.
     joinable_to:
@@ -1447,11 +1444,11 @@ sql_generation_rules:
     action_if_violated: 'Verify with user ask: ''Should I join by month-specific periods or by DealerPulse across all months?'''
     severity: HIGH
   - requirement_id: PRODUCT_CATEGORY_AGGREGATE_FIRST
-    description: Tables with PRODUCT_CATEGORY (VW_STOCK_AVAILABILITY_DealerPulse, VW_SALES_PER_PRODUCT_CATEGORY) must GROUP
+    description: Tables with PRODUCT_CATEGORY (VW_STOCK_AVAILABILITY_DealerPulse, vw_sales_per_product_category) must GROUP
       BY PRODUCT_CATEGORY before joining to other tables
     table_exception:
     - VW_STOCK_AVAILABILITY_DealerPulse
-    - VW_SALES_PER_PRODUCT_CATEGORY
+    - vw_sales_per_product_category
     correct_pattern: WITH table_agg AS (SELECT DealerPulse_NAME, SUM(...) FROM table GROUP BY DealerPulse_NAME)
     action_if_violated: REJECT - categorized data will create duplicate rows
     severity: CRITICAL
@@ -1978,11 +1975,11 @@ tables:
     description: Orders Count
     label: Orders Count
     default_aggregation: sum
-- name: VW_SALES_PER_PRODUCT_CATEGORY
+- name: vw_sales_per_product_category
   base_table:
     database: DealerPulse
     schema: INFORMATION_MART
-    table: VW_SALES_PER_PRODUCT_CATEGORY
+    table: vw_sales_per_product_category
   description: 'Sales revenue and quantity by product category per DealerPulse, monthly pre-aggregated. Primary join key:
     DealerPulse_NAME'
   dimensions:
@@ -2818,14 +2815,14 @@ relationships:
     aliases
   join_key:
   - DealerPulse_NAME
-  join_pattern: "WITH sales_agg AS (\n  SELECT DealerPulse_NAME, SUM(TOTAL_QUANTITY) as total_units FROM VW_SALES_PER_PRODUCT_CATEGORY\
+  join_pattern: "WITH sales_agg AS (\n  SELECT DealerPulse_NAME, SUM(TOTAL_QUANTITY) as total_units FROM vw_sales_per_product_category\
     \ GROUP BY DealerPulse_NAME\n),\nmargin_agg AS (\n  SELECT DealerPulse_NAME, AVG(GROSS_PROFIT_MARGIN_PCT) as avg_margin\
-    \ FROM VW_GROSS_PROFIT_MARGIN GROUP BY DealerPulse_NAME\n)\nSELECT sa.DealerPulse_NAME, sa.total_units, m.avg_margin FROM\
+    \ FROM vw_gross_profit_margin GROUP BY DealerPulse_NAME\n)\nSELECT sa.DealerPulse_NAME, sa.total_units, m.avg_margin FROM\
     \ sales_agg sa LEFT JOIN margin_agg m ON sa.DealerPulse_NAME = m.DealerPulse_NAME\n"
-  primary_table: VW_SALES_PER_PRODUCT_CATEGORY
+  primary_table: vw_sales_per_product_category
   joinable_tables:
-  - VW_GROSS_PROFIT_MARGIN
-  - VW_DealerPulse_CONTRIBUTION_MARGIN
+  - vw_gross_profit_margin
+  - vw_dealer_contribution_margin
   - VW_AVERAGE_REPAIR_TURNAROUND_TIME
   - VW_ORDER_LEAD_TIME
   critical_note: Each table alias must be different (sa, m, t, etc). NEVER reuse the same alias for multiple tables
@@ -2909,7 +2906,7 @@ query_patterns:
 - pattern_name: Product Category Sales Mix
   description: Analyze sales distribution across product categories
   template: "SELECT \n  DealerPulse_NAME,\n  PRODUCT_CATEGORY,\n  TOTAL_REVENUE,\n  TOTAL_QUANTITY,\n  ROUND(100.0 * TOTAL_REVENUE\
-    \ / SUM(TOTAL_REVENUE) OVER (PARTITION BY DealerPulse_NAME), 2) as revenue_share_pct\nFROM DealerPulse.INFORMATION_MART.VW_SALES_PER_PRODUCT_CATEGORY\n\
+    \ / SUM(TOTAL_REVENUE) OVER (PARTITION BY DealerPulse_NAME), 2) as revenue_share_pct\nFROM DealerPulse.INFORMATION_MART.vw_sales_per_product_category\n\
     ORDER BY DealerPulse_NAME, TOTAL_REVENUE DESC"
 verified_queries:
 - name: DealerPulse_profitability_analysis
@@ -3032,7 +3029,7 @@ verified_queries:
     \ DealerPulse.INFORMATION_MART.VW_AVERAGE_REPAIR_TURNAROUND_TIME\n  GROUP BY DealerPulse_NAME\n),\nlead_agg AS (\n  SELECT\
     \ \n    DealerPulse_NAME,\n    AVG(AVG_ORDER_LEAD_TIME_DAYS) as avg_lead_time_days\n  FROM DealerPulse.INFORMATION_MART.VW_ORDER_LEAD_TIME\n\
     \  GROUP BY DealerPulse_NAME\n),\nrevenue_agg AS (\n  SELECT \n    DealerPulse_NAME,\n    SUM(TOTAL_REVENUE) as total_revenue\n\
-    \  FROM DealerPulse.INFORMATION_MART.VW_SALES_PER_PRODUCT_CATEGORY\n  GROUP BY DealerPulse_NAME\n),\nmargin_agg AS (\n\
+    \  FROM DealerPulse.INFORMATION_MART.vw_sales_per_product_category\n  GROUP BY DealerPulse_NAME\n),\nmargin_agg AS (\n\
     \  SELECT \n    DealerPulse_NAME,\n    AVG(GROSS_PROFIT_MARGIN_PCT) as avg_gross_profit_margin_pct\n  FROM DealerPulse.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN\n\
     \  GROUP BY DealerPulse_NAME\n)\nSELECT\n  t.DealerPulse_NAME,\n  ROUND(t.avg_repair_hours, 1) as avg_repair_hours,\n\
     \  ROUND(l.avg_lead_time_days, 1) as avg_lead_time_days,\n  r.total_revenue,\n  ROUND(m.avg_gross_profit_margin_pct, 2)\
@@ -3042,7 +3039,7 @@ verified_queries:
 - name: DealerPulse_sales_by_category
   question: Show sales by product category. What is the revenue mix for each DealerPulse?
   sql: "SELECT\n  DealerPulse_NAME,\n  PRODUCT_CATEGORY,\n  TOTAL_REVENUE,\n  TOTAL_QUANTITY,\n  ROUND(100.0 * TOTAL_REVENUE\
-    \ / SUM(TOTAL_REVENUE) OVER (PARTITION BY DealerPulse_NAME), 1) as revenue_share_pct\nFROM DealerPulse.INFORMATION_MART.VW_SALES_PER_PRODUCT_CATEGORY\n\
+    \ / SUM(TOTAL_REVENUE) OVER (PARTITION BY DealerPulse_NAME), 1) as revenue_share_pct\nFROM DealerPulse.INFORMATION_MART.vw_sales_per_product_category\n\
     ORDER BY DealerPulse_NAME, TOTAL_REVENUE DESC"
 - name: declining_product_categories
   question: Which categories show declining sales? Which product categories are declining? What categories need corrective
@@ -3064,7 +3061,7 @@ verified_queries:
   sql: "WITH category_metrics AS (\n  SELECT \n    PRODUCT_CATEGORY,\n    SUM(COALESCE(TOTAL_REVENUE, 0)) AS total_revenue,\n\
     \    SUM(COALESCE(TOTAL_QUANTITY, 0)) AS total_quantity,\n    COUNT(DISTINCT DealerPulse_NAME) AS num_DealerPulses,\n\
     \    COUNT(*) AS sample_count,\n    CASE \n      WHEN COUNT(*) > 0 THEN ROUND(SUM(COALESCE(TOTAL_REVENUE, 0))::FLOAT /\
-    \ COUNT(*), 2)\n      ELSE 0\n    END AS avg_monthly_revenue\n  FROM DealerPulse.INFORMATION_MART.VW_SALES_PER_PRODUCT_CATEGORY\n\
+    \ COUNT(*), 2)\n      ELSE 0\n    END AS avg_monthly_revenue\n  FROM DealerPulse.INFORMATION_MART.vw_sales_per_product_category\n\
     \  WHERE PRODUCT_CATEGORY IS NOT NULL AND TOTAL_REVENUE IS NOT NULL\n  GROUP BY PRODUCT_CATEGORY\n),\ncategory_stats AS\
     \ (\n  SELECT \n    *,\n    AVG(total_revenue) OVER () AS company_avg_category_revenue\n  FROM category_metrics\n)\nSELECT\
     \ \n  PRODUCT_CATEGORY,\n  total_revenue,\n  total_quantity,\n  num_DealerPulses,\n  ROUND(avg_monthly_revenue, 2) AS\
@@ -3168,7 +3165,7 @@ verified_queries:
     \ 20 AND COALESCE(ga.avg_growth_rate_pct, 0) > 5 THEN 'EXCELLENT - Growing & Profitable'\n    WHEN g.GROSS_PROFIT_MARGIN_PCT\
     \ >= 15 THEN 'GOOD - Healthy Margins'\n    WHEN g.GROSS_PROFIT_MARGIN_PCT < 15 AND COALESCE(ga.avg_growth_rate_pct, 0)\
     \ < 0 THEN 'CRITICAL - Declining & Low Profit'\n    WHEN g.GROSS_PROFIT_MARGIN_PCT < 15 THEN 'WARNING - Low Profit Margins'\n\
-    \    ELSE 'FAIR'\n  END as performance_status\nFROM DealerPulse.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN g\nLEFT JOIN growth_agg\
+    \    ELSE 'FAIR'\n  END as performance_status\nFROM DealerPulse.INFORMATION_MART.vw_gross_profit_margin g\nLEFT JOIN growth_agg\
     \ ga\n  ON g.DealerPulse_NAME = ga.DealerPulse_NAME\nORDER BY g.GROSS_PROFIT_MARGIN_PCT DESC;"
 - name: DealerPulse_health_scorecard
   question: Tell me about DealerPulse health. What is the DealerPulse health status? Show DealerPulse health. DealerPulse
@@ -3388,12 +3385,12 @@ verified_queries:
   question: Show me sales per product category. Where are my sales per product category? Sales Per Product Category overview.
   use_as_onboarding_question: true
   sql: "SELECT\n  dl.DealerPulse_NAME,\n  dl.PRODUCT_CATEGORY,\n  ROUND(SUM(dl.TOTAL_REVENUE), 2) AS TOTAL_REVENUE,\n  ROUND(SUM(dl.TOTAL_QUANTITY),\
-    \ 2) AS TOTAL_QUANTITY\nFROM DealerPulse.INFORMATION_MART.VW_SALES_PER_PRODUCT_CATEGORY dl\nGROUP BY dl.DealerPulse_NAME,\
+    \ 2) AS TOTAL_QUANTITY\nFROM DealerPulse.INFORMATION_MART.vw_sales_per_product_category dl\nGROUP BY dl.DealerPulse_NAME,\
     \ dl.PRODUCT_CATEGORY\nORDER BY dl.DealerPulse_NAME;"
 - name: sales_per_product_category_with_performance
   question: Show Sales Per Product Category with DealerPulse performance.
   sql: "WITH base AS (\n  SELECT\n    dl.DealerPulse_NAME,\n    dl.PRODUCT_CATEGORY,\n    ROUND(SUM(dl.TOTAL_REVENUE), 2)\
-    \ AS TOTAL_REVENUE,\n    ROUND(SUM(dl.TOTAL_QUANTITY), 2) AS TOTAL_QUANTITY,\n  FROM DealerPulse.INFORMATION_MART.VW_SALES_PER_PRODUCT_CATEGORY\
+    \ AS TOTAL_REVENUE,\n    ROUND(SUM(dl.TOTAL_QUANTITY), 2) AS TOTAL_QUANTITY,\n  FROM DealerPulse.INFORMATION_MART.vw_sales_per_product_category\
     \ dl\n  GROUP BY dl.DealerPulse_NAME, dl.PRODUCT_CATEGORY\n),\nperf AS (\n  SELECT DealerPulse_NAME,\n    AVG(GROSS_PROFIT_MARGIN_PCT)\
     \ AS avg_margin,\n    SUM(TOTAL_REVENUE) AS total_revenue\n  FROM DealerPulse.INFORMATION_MART.VW_GROSS_PROFIT_MARGIN\n\
     \  GROUP BY DealerPulse_NAME\n)\nSELECT b.*, ROUND(p.avg_margin,2) AS avg_gross_margin_pct, ROUND(p.total_revenue,0) AS\
@@ -3635,11 +3632,11 @@ auto_verified_queries:
   - compare
   description: Cross-metric for Order Lead Time.
 - query_name: sales_per_product_category_overview
-  view: VW_SALES_PER_PRODUCT_CATEGORY
+  view: vw_sales_per_product_category
   keywords: *id013
   description: Auto-generated for Sales Per Product Category.
 - query_name: sales_per_product_category_with_performance
-  view: VW_SALES_PER_PRODUCT_CATEGORY
+  view: vw_sales_per_product_category
   keywords:
   - sales per product category
   - show sales per product category
