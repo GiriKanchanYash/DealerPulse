@@ -401,7 +401,7 @@ def _update_yaml_from_snowflake(session, current_yaml: str, auto_add_views: bool
     return yaml.dump(model, default_flow_style=False, sort_keys=False)
 
 
-def _save_yaml_locally(yaml_content: str, filename: str = "dealer_model_simplified_06_03_2026.yml") -> bool:
+def _save_yaml_locally(yaml_content: str, filename: str = "schema_metadata.yaml") -> bool:
     """Save YAML content to local file."""
     try:
         with open(filename, "w", encoding="utf-8") as f:
@@ -413,7 +413,7 @@ def _save_yaml_locally(yaml_content: str, filename: str = "dealer_model_simplifi
         return False
 
 
-def _upload_yaml_to_snowflake(session, yaml_content: str, filename: str = "dealer_model_simplified_06_03_2026.yml") -> bool:
+def _upload_yaml_to_snowflake(session, yaml_content: str, filename: str = "schema_metadata.yaml") -> bool:
     """Stage upload is disabled for Fabric compatibility."""
     logging.info("[YAML UPLOAD] Stage upload skipped (Fabric compatibility mode)")
     return False
@@ -906,7 +906,7 @@ def load_yaml_model(yaml_path="schema_metadata.yaml"):
         os.path.join(os.path.dirname(__file__), yaml_path),
         os.path.join(os.getcwd(), yaml_path),
         os.path.join(os.path.dirname(__file__), "Extra", yaml_path),
-        "dealer_model_simplified_06_03_2026.yml",
+        "schema_metadata.yaml",
         "dealer_model.yml",
         "semantic_model.yml",
         "schema_metadata.yaml",
@@ -8184,7 +8184,7 @@ def _offtopic_response(query: str, intent: str, session, cortex_model: str) -> D
 def call_cortex_analyst(
     session,
     query_text: str,
-    yaml_path: str = "dealer_model_simplified_06_03_2026.yml",
+    yaml_path: str = "schema_metadata.yaml",
     history: Optional[List[Dict[str, str]]] = None,
 ) -> Dict[str, Any]:
     """
