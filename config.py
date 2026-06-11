@@ -121,7 +121,7 @@ class Config:
     )
     FABRIC_DATABASE: str = _vault.get(
         "FABRIC_DATABASE",
-        _settings.get("fabric", {}).get("database", "LH_PROCURE_SPEND_IQ"),
+        _settings.get("fabric", {}).get("database", "DealerPulse"),
     )
 
     # Warehouse (read + write: history, insights, cache)
@@ -133,7 +133,7 @@ class Config:
     )
     FABRIC_WAREHOUSE_DATABASE: str = _vault.get(
         "FABRIC_WAREHOUSE_DATABASE",
-        _settings.get("fabric", {}).get("warehouse_database", "WH_PROCURE_SPEND_IQ"),
+        _settings.get("fabric", {}).get("warehouse_database", "DW_DealerPulse"),
     )
 
     # Schema names
@@ -341,7 +341,7 @@ class Config:
     @classmethod
     def print_diagnostics(cls) -> None:
         """Print masked config values to the terminal for quick troubleshooting."""
-        print("\n=== ProcureIQ Configuration Diagnostics ===")
+        print("\n=== DealerPulse / Fabric Configuration Diagnostics ===")
         for line in cls.validate_connection_values():
             print(" ", line)
         missing = [

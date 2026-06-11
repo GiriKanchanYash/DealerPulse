@@ -3,7 +3,9 @@ import pandas as pd
 import numpy as np
 import yaml
 from datetime import datetime, timedelta
-from db_service import get_active_session, run_df
+from db_service import get_active_session, get_fabric_session, run_df, run_warehouse_df, run_warehouse_non_query
+from warehouse_setup import ensure_warehouse_tables
+from fabric_sql import ensure_top_limit
 import plotly.graph_objects as go
 import plotly.express as px
 from io import StringIO
@@ -987,7 +989,7 @@ _YAML_FILENAME = "schema_metadata.yaml"
 _YAML_LOCAL_PATH = os.path.join(_SCRIPT_DIR, _YAML_FILENAME)  # Absolute path to YAML file
 
 _SEMANTIC_CONFIG = {
-    "database":        "DEALER",
+    "database":        Config.FABRIC_DATABASE,
     "schema":          "INFORMATION_MART",
     "stage":           "LOCAL",
     "yaml_filename":   _YAML_FILENAME,
@@ -1087,10 +1089,10 @@ def _semantic_list_views(session, db: str, schema: str, prefix: str) -> List[str
         return []
 
 def _semantic_get_columns(session, db: str, schema: str, view: str) -> List[Dict]:
-    """Fetch column definitions from Snowflake view."""
+    """Fetch column definitions from Microsoft Fabric / SQL Server view."""
     try:
         df = session.sql(f"""
-            SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COMMENT
+            SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE
             FROM {db}.INFORMATION_SCHEMA.COLUMNS
             WHERE TABLE_SCHEMA = '{schema}' AND TABLE_NAME = '{view}'
             ORDER BY ORDINAL_POSITION
@@ -1098,7 +1100,7 @@ def _semantic_get_columns(session, db: str, schema: str, view: str) -> List[Dict
         return [
             {"name": str(r["COLUMN_NAME"]), "data_type": str(r["DATA_TYPE"]),
              "nullable": str(r.get("IS_NULLABLE", "YES")).upper() == "YES",
-             "comment": str(r.get("COMMENT", "") or "")}
+             "comment": ""}  # COMMENT column does not exist in SQL Server/Fabric INFORMATION_SCHEMA
             for _, r in df.iterrows()
         ]
     except Exception as e:
@@ -1597,12 +1599,14 @@ else:
     logging.error(f"[APP START] Current state: _ROUTING_INITIALIZED={_ROUTING_INITIALIZED}, _INTENTS count={len(_INTENTS)}")
 
 
-# Determine if we're running inside Snowflake (Snowsight / SiS)
+# Determine if Microsoft Fabric SQL endpoint is reachable
 try:
     _ = get_active_session()
-    SNOWFLAKE_AVAILABLE = True
+    FABRIC_AVAILABLE = True
 except Exception:
-    SNOWFLAKE_AVAILABLE = False
+    FABRIC_AVAILABLE = False
+
+SNOWFLAKE_AVAILABLE = FABRIC_AVAILABLE  # backward-compatible alias
 
 
 # ============================================================================
@@ -1610,74 +1614,49 @@ except Exception:
 # ============================================================================
 
 class GenieQueryCache:
-    """Enhanced LRU cache for Genie queries with Snowflake persistence and similarity matching."""
-    
+    """Enhanced LRU cache for Genie queries with Fabric Warehouse persistence and similarity matching."""
+
+    _CACHE_TABLE = f"[{Config.WAREHOUSE_SCHEMA}].[GENIE_QUERY_HISTORY]"
+    _TS = "CONVERT(VARCHAR(30), GETDATE(), 120)"
+
     def __init__(self, session=None, max_size=100, ttl_seconds=3600, similarity_threshold=0.60):
         """
-        Initialize Genie Query Cache with Snowflake backend.
-        
+        Initialize Genie Query Cache with Fabric Warehouse backend.
+
         Args:
-            session: Snowflake session object
+            session: Fabric Lakehouse session (read queries only)
             max_size: Max in-memory cache entries
-            ttl_seconds: Time-to-live for cached entries (24 hours default)
-            similarity_threshold: Minimum similarity score (0-1) to consider questions as matching
-                                 Default 0.60 (60%) catches word order variations ('what is X' vs 'compare X')
+            ttl_seconds: Time-to-live for cached entries
+            similarity_threshold: Minimum similarity score (0-1) for semantic matches
         """
         self.session = session
-        self.cache = {}  # In-memory cache
+        self.cache = {}
         self.max_size = max_size
         self.ttl_seconds = ttl_seconds
         self.similarity_threshold = similarity_threshold
         self.access_order = []
         self.table_initialized = False
         self._current_user = None
-        
-        # Try to get current user if session is available
+
         if self.session:
             try:
                 self._current_user = self.session.sql("SELECT SYSTEM_USER AS CU").collect()[0][0]
             except Exception:
                 self._current_user = "UNKNOWN"
-        
-        # Initialize Snowflake table
-        if self.session:
-            self._init_snowflake_table()
-    
-    def _init_snowflake_table(self):
-        # Microsoft Fabric / SQL Server compatible DDL.
-        # - No UUID_STRING() → use NEWID() for the default primary key.
-        # - No VARIANT → use NVARCHAR(MAX) for JSON storage.
-        # - No TIMESTAMP_NTZ → use DATETIME2.
-        # - No inline DEFAULT on PRIMARY KEY column in CREATE TABLE → separate constraint.
-        # - IF NOT EXISTS is not supported; use the IF OBJECT_ID check pattern.
-        # - No SEARCH OPTIMIZATION syntax → create a normal index instead.
+
+        self._init_warehouse_table()
+
+    def _init_warehouse_table(self):
+        """Ensure GENIE_QUERY_HISTORY exists in Fabric Warehouse (not Lakehouse)."""
         try:
-            create_table_sql = f"""
-            IF OBJECT_ID(N'{Config.FABRIC_DATABASE}.INFORMATION_MART.GENIE_QUERY_HISTORY', N'U') IS NULL
-            BEGIN
-                CREATE TABLE {Config.FABRIC_DATABASE}.INFORMATION_MART.GENIE_QUERY_HISTORY (
-                    QUERY_ID        UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(),
-                    QUESTION        NVARCHAR(MAX) NOT NULL,
-                    QUESTION_HASH   NVARCHAR(64)  NOT NULL,
-                    RESPONSE_JSON   NVARCHAR(MAX) NOT NULL,
-                    USER_NAME       NVARCHAR(256),
-                    RESPONSE_TIME_MS FLOAT,
-                    CREATED_AT      DATETIME2 DEFAULT GETUTCDATE() NOT NULL,
-                    EXPIRES_AT      DATETIME2,
-                    HIT_COUNT       INT DEFAULT 0,
-                    SIMILARITY_SCORE FLOAT,
-                    CONSTRAINT PK_GENIE_QUERY_HISTORY PRIMARY KEY (QUERY_ID)
-                );
-                CREATE INDEX IX_GENIE_QH_HASH ON
-                    {Config.FABRIC_DATABASE}.INFORMATION_MART.GENIE_QUERY_HISTORY (QUESTION_HASH);
-            END
-            """
-            self.session.sql(create_table_sql).collect()
-            self.table_initialized = True
-            print("[CACHE INIT] GENIE_QUERY_HISTORY table initialized successfully", file=__import__('sys').stderr)
+            results = ensure_warehouse_tables()
+            status = results.get("GENIE_QUERY_HISTORY", "exists")
+            self.table_initialized = status in ("ok", "exists")
+            if self.table_initialized:
+                print("[CACHE INIT] GENIE_QUERY_HISTORY ready in Fabric Warehouse", file=__import__('sys').stderr)
         except Exception as e:
             import traceback
-            print(f"[CACHE INIT ERROR] Could not initialize table: {str(e)}", file=__import__('sys').stderr)
+            print(f"[CACHE INIT ERROR] Could not initialize warehouse table: {str(e)}", file=__import__('sys').stderr)
             traceback.print_exc()
             self.table_initialized = False
     
@@ -1738,17 +1717,16 @@ class GenieQueryCache:
                         'source': 'in-memory'
                     })
         
-        # === CHECK 2: SNOWFLAKE DATABASE (for historical questions) ===
+        # === CHECK 2: FABRIC WAREHOUSE (for historical questions) ===
         if self.table_initialized:
             print(f"[SIMILARITY] Checking database for similar questions...", file=sys.stderr)
             try:
-                query_sql = """
-                SELECT QUESTION, RESPONSE_JSON, RESPONSE_TIME_MS, CREATED_AT, HIT_COUNT
-                FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.GENIE_QUERY_HISTORY
+                query_sql = f"""
+                SELECT TOP 100 QUESTION, RESPONSE_JSON, RESPONSE_TIME_MS, CREATED_AT, HIT_COUNT
+                FROM {self._CACHE_TABLE}
                 ORDER BY CREATED_AT DESC
-                LIMIT 100
                 """
-                df = self.session.sql(query_sql).to_pandas()
+                df = run_warehouse_df(query_sql)
                 
                 if not df.empty:
                     for idx, row in df.iterrows():
@@ -1801,18 +1779,17 @@ class GenieQueryCache:
             else:
                 del self.cache[q_hash]
 
-        # === STRATEGY 1b: EXACT HASH MATCH — Snowflake ===
+        # === STRATEGY 1b: EXACT HASH MATCH — Fabric Warehouse ===
         if self.table_initialized:
-            print(f"[CACHE GET] Checking Snowflake for EXACT hash: {q_hash}", file=sys.stderr)
+            print(f"[CACHE GET] Checking Warehouse for EXACT hash: {q_hash}", file=sys.stderr)
             try:
                 query_sql = f"""
-                SELECT RESPONSE_JSON, RESPONSE_TIME_MS
-                FROM {Config.WAREHOUSE_SCHEMA}.INFORMATION_MART.GENIE_QUERY_HISTORY
+                SELECT TOP 1 RESPONSE_JSON, RESPONSE_TIME_MS
+                FROM {self._CACHE_TABLE}
                 WHERE QUESTION_HASH = '{q_hash}'
                 ORDER BY CREATED_AT DESC
-                LIMIT 1
                 """
-                df = self.session.sql(query_sql).to_pandas()
+                df = run_warehouse_df(query_sql)
                 if not df.empty:
                     resp_json     = df.iloc[0]['RESPONSE_JSON']
                     response_time = df.iloc[0]['RESPONSE_TIME_MS']
@@ -1935,7 +1912,7 @@ class GenieQueryCache:
         if q_hash not in self.access_order:
             self.access_order.append(q_hash)
 
-        # ── Snowflake persistence ─────────────────────────────────────────────
+        # ── Fabric Warehouse persistence ─────────────────────────────────────
         if not self.table_initialized:
             print(f"[CACHE SET] Table not initialized, skipping: {question[:50]}", file=__import__('sys').stderr)
             return
@@ -1952,20 +1929,25 @@ class GenieQueryCache:
             q_escaped    = question[:500].replace("'", "''")
             user_escaped = (self._current_user or 'UNKNOWN').replace("'", "''")
             json_escaped = json_str.replace("'", "''")
+            query_id     = hashlib.sha256(f"{q_hash}:{time.time()}".encode()).hexdigest()[:32]
 
             insert_sql = f"""
-                INSERT INTO {Config.WAREHOUSE_SCHEMA}.GENIE_QUERY_HISTORY
-                    (QUESTION, QUESTION_HASH, RESPONSE_JSON, USER_NAME, RESPONSE_TIME_MS)
+                INSERT INTO {self._CACHE_TABLE}
+                    (QUERY_ID, QUESTION, QUESTION_HASH, RESPONSE_JSON, USER_NAME,
+                     RESPONSE_TIME_MS, CREATED_AT, HIT_COUNT)
                 VALUES (
+                    '{query_id}',
                     '{q_escaped}',
                     '{q_hash}',
                     '{json_escaped}',
                     '{user_escaped}',
-                    {float(response_time_ms)}
+                    {float(response_time_ms)},
+                    {self._TS},
+                    0
                 )
             """
             print(f"[CACHE SET] Inserting hash: {q_hash}", file=__import__('sys').stderr)
-            self.session.sql(insert_sql).collect()
+            run_warehouse_non_query(insert_sql)
             print(f"[CACHE SET] Inserted: {q_hash}", file=__import__('sys').stderr)
 
         except Exception as e:
@@ -1980,19 +1962,18 @@ class GenieQueryCache:
         
         try:
             query_sql = f"""
-            SELECT 
+            SELECT TOP {limit}
                 QUESTION,
                 COUNT(*) as FREQUENCY,
                 ROUND(AVG(RESPONSE_TIME_MS), 2) as AVG_RESPONSE_TIME_MS,
                 MAX(CREATED_AT) as LAST_ASKED,
                 ROUND(AVG(RESPONSE_TIME_MS) * COUNT(*), 0) as TOTAL_TIME_SAVED_MS
-            FROM {Config.WAREHOUSE_SCHEMA}.GENIE_QUERY_HISTORY
-            WHERE CREATED_AT >= DATEADD(day, -{days}, GETUTCDATE())
+            FROM {self._CACHE_TABLE}
+            WHERE CREATED_AT >= CONVERT(VARCHAR(30), DATEADD(day, -{days}, GETDATE()), 120)
             GROUP BY QUESTION
             ORDER BY FREQUENCY DESC
-            LIMIT {limit}
             """
-            return self.session.sql(query_sql).to_pandas()
+            return run_warehouse_df(query_sql)
         except Exception:
             return pd.DataFrame()
     
@@ -2011,10 +1992,10 @@ class GenieQueryCache:
                 MIN(RESPONSE_TIME_MS) as MIN_RESPONSE_TIME_MS,
                 MAX(RESPONSE_TIME_MS) as MAX_RESPONSE_TIME_MS,
                 ROUND(SUM(RESPONSE_TIME_MS) / 1000.0 / 60.0, 2) as TOTAL_TIME_MINUTES
-            FROM {Config.WAREHOUSE_SCHEMA}.GENIE_QUERY_HISTORY
-            WHERE CREATED_AT >= DATEADD(day, -{days}, GETUTCDATE())
+            FROM {self._CACHE_TABLE}
+            WHERE CREATED_AT >= CONVERT(VARCHAR(30), DATEADD(day, -{days}, GETDATE()), 120)
             """
-            df = self.session.sql(stats_sql).to_pandas()
+            df = run_warehouse_df(stats_sql)
             if df.empty:
                 return {}
             
@@ -3488,9 +3469,15 @@ If these constraints cannot be satisfied, respond with a clear explanation of th
 # FABRIC CONFIGURATION & CONNECTION
 # ============================================================================
 @st.cache_resource
+def get_fabric_connection():
+    """Return the cached Microsoft Fabric Lakehouse SQL session."""
+    return get_fabric_session()
+
+
+@st.cache_resource
 def get_snowflake_connection():
-    """Backward-compatible alias for the Fabric session helper."""
-    return get_active_session()
+    """Backward-compatible alias for get_fabric_connection()."""
+    return get_fabric_connection()
 
 @st.cache_data(ttl=7200)  # Cache for 2 hours instead of 1 for better performance
 def load_semantic_model():
@@ -4783,26 +4770,26 @@ def render_header(subtitle = ""):
         
         with nav_col1:
             dashboard_active = st.session_state.get('current_page', 'Dashboard') == 'Dashboard'
-            if st.button("Dashboard", key="header_nav_dashboard", width='stretch'):
+            if st.button("Dashboard", key="header_nav_dashboard"):
                 st.session_state.current_page = 'Dashboard'
                 st.rerun()
         
         with nav_col2:
             genie_active = st.session_state.get('current_page', 'Dashboard') == 'Genie'
-            if st.button("Genie", key="header_nav_genie", width='stretch'):
+            if st.button("Genie", key="header_nav_genie"):
                 st.session_state.current_page = 'Genie'
                 st.rerun()
         
         with nav_col3:
             dlc_active = st.session_state.get('current_page', 'Dashboard') == 'Dealer Life Cycle'
-            if st.button("Dealer Health", key="header_nav_dlc", width='stretch'):
+            if st.button("Dealer Health", key="header_nav_dlc"):
                 st.session_state.current_page = 'Dealer Life Cycle'
                 st.rerun()
 
         with nav_col4:
             # ── Enhancement 4: AI Agents tab ─────────────────────────────────
             agent_active = st.session_state.get('current_page', 'Dashboard') == 'AI Agents'
-            if st.button("AI Agents", key="header_nav_agent_ai", width='stretch'):
+            if st.button("AI Agents", key="header_nav_agent_ai"):
                 st.session_state.current_page = 'AI Agents'
                 st.rerun()
     
@@ -6020,17 +6007,17 @@ def render_attention_and_priority(session, filters):
 
         tab_cols = st.columns([1, 1, 1], gap="small")
         with tab_cols[0]:
-            if st.button(f"Critical ({critical_count})", key="na_btn_critical", width='stretch'):
+            if st.button(f"Critical ({critical_count})", key="na_btn_critical"):
                 st.session_state.attention_severity_tab = 'Critical'
                 st.session_state.attention_page = 0
                 st.rerun()
         with tab_cols[1]:
-            if st.button(f"Average ({average_count})", key="na_btn_average", width='stretch'):
+            if st.button(f"Average ({average_count})", key="na_btn_average"):
                 st.session_state.attention_severity_tab = 'Average'
                 st.session_state.attention_page = 0
                 st.rerun()
         with tab_cols[2]:
-            if st.button(f"Good ({good_count})", key="na_btn_good", width='stretch'):
+            if st.button(f"Good ({good_count})", key="na_btn_good"):
                 st.session_state.attention_severity_tab = 'Good'
                 st.session_state.attention_page = 0
                 st.rerun()
@@ -6179,7 +6166,7 @@ def render_attention_and_priority(session, filters):
 
         with pag_cols[0]:
             if st.session_state.attention_page > 0:
-                if st.button("← Prev", key="na_prev_bottom", width='stretch'):
+                if st.button("← Prev", key="na_prev_bottom"):
                     st.session_state.attention_page -= 1
                     st.rerun()
             else:
@@ -6197,7 +6184,7 @@ def render_attention_and_priority(session, filters):
             )
         with pag_cols[2]:
             if st.session_state.attention_page < total_pages - 1:
-                if st.button("Next →", key="na_next_bottom", width='stretch'):
+                if st.button("Next →", key="na_next_bottom"):
                     st.session_state.attention_page += 1
                     st.rerun()
             else:
@@ -6539,7 +6526,7 @@ def render_visualizations(session, sla_lead_time_days: float = 7.0):
 
             with _chart_card_open():
                 st.markdown("**Revenue vs Gross Profit Margin**")
-                st.plotly_chart(fig, width='stretch')
+                st.plotly_chart(fig)
         else:
             st.info("No profit margin data available.")
 
@@ -6588,7 +6575,7 @@ def render_visualizations(session, sla_lead_time_days: float = 7.0):
 
             with _chart_card_open():
                 st.markdown("**Sales Mix by Product Category**")
-                st.plotly_chart(fig, width='stretch')
+                st.plotly_chart(fig)
         else:
             st.info("No product sales data available.")
 
@@ -6678,7 +6665,7 @@ def render_visualizations(session, sla_lead_time_days: float = 7.0):
 
             with _chart_card_open():
                 st.markdown("**Cash Conversion Cycle by Dealer**")
-                st.plotly_chart(fig, width='stretch')
+                st.plotly_chart(fig)
         else:
             st.info("No CCC data available.")
 
@@ -6769,7 +6756,7 @@ def render_visualizations(session, sla_lead_time_days: float = 7.0):
 
             with _chart_card_open():
                 st.markdown("**Order Lead Time by Dealer**")
-                st.plotly_chart(fig, width='stretch')
+                st.plotly_chart(fig)
         else:
             st.info("No lead time data available.")
 
@@ -6859,7 +6846,7 @@ def alt_bar_comparison(df: pd.DataFrame, cat_col, curr_col, prev_col, curr_label
             tooltip=['Category:N', 'Period:N', 'Value:Q']
         ).properties(width=800, height=height, title=title).interactive()
         
-        st.altair_chart(chart, width='stretch')
+        st.altair_chart(chart)
     except Exception as e:
         pass
 
@@ -6890,7 +6877,7 @@ def alt_bar(df: pd.DataFrame, x: str, y: str, color: str = '#5046e5', height: in
                 tooltip=[x, y]
             ).properties(width=800, height=height).interactive()
         
-        st.altair_chart(chart, width='stretch')
+        st.altair_chart(chart)
     except Exception as e:
         pass
 
@@ -7088,7 +7075,7 @@ def alt_bar_comparison(
             tooltip=[alt.Tooltip(f"{cat_col}:N"), "Period:N", alt.Tooltip("Value:Q", format=",.2f")]
         ).properties(height=height, title=title).interactive()
 
-        st.altair_chart(chart, width='stretch')
+        st.altair_chart(chart)
     except Exception:
         # do not crash the page due to chart errors
         return
@@ -7120,7 +7107,7 @@ def alt_bar(df: pd.DataFrame, x: str, y: str, color: str = "#5046e5", height: in
                 tooltip=[alt.Tooltip(f"{x}:N"), alt.Tooltip(f"{y}:Q", format=",.2f")]
             ).properties(height=height).interactive()
 
-        st.altair_chart(chart, width='stretch')
+        st.altair_chart(chart)
     except Exception:
         return
 
@@ -7167,7 +7154,7 @@ def alt_bar_multi(df: pd.DataFrame, x: str, y: str, color: str = "#5046e5", heig
                 color=alt.value(color),
                 tooltip=[alt.Tooltip(f"{x}:N"), alt.Tooltip(f"{y}:Q", format=",.2f")]
             ).properties(height=height, width=400).interactive()
-            st.altair_chart(chart, width='stretch')
+            st.altair_chart(chart)
             return
         
         # Split into performance tiers: top performers, middle tier, bottom performers
@@ -7206,7 +7193,7 @@ def alt_bar_multi(df: pd.DataFrame, x: str, y: str, color: str = "#5046e5", heig
                         color=alt.value(color),
                         tooltip=[alt.Tooltip(f"{x}:N"), alt.Tooltip(f"{y}:Q", format=",.2f")]
                     ).properties(height=height, width=250).interactive()
-                    st.altair_chart(chart, width='stretch')
+                    st.altair_chart(chart)
     
     except Exception as e:
         print(f"[CHART ERROR] {str(e)[:100]}")
@@ -7938,9 +7925,7 @@ def run_quick_analysis(analysis_key: str):
 
     try:
         sql = verified_query["sql"].strip()
-        # Add LIMIT for performance (prevent full table scans)
-        if "LIMIT" not in sql.upper():
-            sql = sql.rstrip(";") + "\nLIMIT 500"
+        sql = ensure_top_limit(sql, default_limit=500)
         vendors_df = run_df(sql)
 
         if vendors_df.empty:
@@ -8780,7 +8765,7 @@ def render_prediction_sidebar(session):
         show_anomalies = st.checkbox("Detect Anomalies", value=True)
         show_scenarios = st.checkbox("What-If Scenarios", value=False)
         
-        if st.button("Run Predictions", width='stretch', type="primary"):
+        if st.button("Run Predictions", type="primary"):
             st.session_state['run_predictions'] = True
             st.session_state['forecast_weeks'] = forecast_weeks
         
@@ -8795,7 +8780,7 @@ def render_prediction_sidebar(session):
             with col2:
                 st.metric("Hit Rate", f"{cache_stats['hit_rate']:.0%}")
             
-            if st.button("🔄 Clear Cache", width='stretch'):
+            if st.button("🔄 Clear Cache"):
                 st.session_state.genie_cache.cache.clear()
                 st.success("Cache cleared!")
 
@@ -8838,7 +8823,7 @@ def render_prediction_dashboard(session, dealer_name: str, forecast_weeks: int =
                     tooltip=['week', 'forecast']
                 ).properties(height=250)
                 
-                st.altair_chart(chart, width='stretch')
+                st.altair_chart(chart)
             except Exception as e:
                 st.info(f"Chart rendering: {str(e)[:50]}")
         else:
@@ -9441,7 +9426,7 @@ Respond with THREE sections (ONLY these headers, no extra text):
                     <div style="font-size:13px;color:{TEXT_DESC};line-height:1.4;">
                         {analysis["desc"]}</div>
                 </div>""", unsafe_allow_html=True)
-                if st.form_submit_button("Ask Genie", width='stretch'):
+                if st.form_submit_button("Ask Genie"):
                     clicked_key = key
 
     if clicked_key is not None:
@@ -9990,7 +9975,7 @@ Respond with THREE sections (ONLY these headers, no extra text):
                         key=f"genie_chat_input_{st.session_state.genie_input_version}",
                     )
                 with btn_col:
-                    send_clicked = st.form_submit_button("Send →", width='stretch')
+                    send_clicked = st.form_submit_button("Send →")
 
             if send_clicked and user_query:
                 st.session_state.selected_analysis   = "custom"
@@ -12640,7 +12625,6 @@ def check_required_views(session):
             SELECT TABLE_NAME
             FROM {current_db}.INFORMATION_SCHEMA.TABLES
             WHERE TABLE_SCHEMA = 'INFORMATION_MART'
-              AND TABLE_TYPE = 'VIEW'
         """).to_pandas()
     except Exception:
         # If metadata lookup fails, do not block startup with a false negative.
@@ -14546,11 +14530,17 @@ def render_agent_ai_page(session):
 # ============================================================================
 def main():
     """Main application flow"""
-    
+
+    # Ensure Fabric Warehouse app tables exist before any writes
+    try:
+        ensure_warehouse_tables()
+    except Exception as exc:
+        logger.warning("Warehouse table setup skipped: %s", exc)
+
     # Initialize session
-    session = get_snowflake_connection()
-    
-    # Initialize Genie Cache with Snowflake backend
+    session = get_fabric_connection()
+
+    # Initialize Genie Cache with Fabric Warehouse backend
     if not st.session_state.get('genie_cache_initialized', False):
         st.session_state.genie_cache = GenieQueryCache(
             session=session,

@@ -22,8 +22,14 @@ import pandas as pd
 import pyodbc
 
 from config import Config
+from fabric_sql import normalize_sql
 
 logger = logging.getLogger(__name__)
+
+
+def _prepare_sql(sql: str) -> str:
+    """Normalize SQL for Microsoft Fabric T-SQL before execution."""
+    return normalize_sql(sql)
 
 # ---------------------------------------------------------------------------
 # CHANGE 1: Added MAX_RETRIES and RETRY_DELAY constants (after imports)
@@ -91,7 +97,7 @@ class FabricDataFrame:
     """Thin SnowparkDataFrame shim around a SQL query string."""
 
     def __init__(self, query: str, session: FabricSession):
-        self._query = query
+        self._query = _prepare_sql(query)
         self._session = session
 
     # ---------------------------------------------------------------------------
@@ -154,6 +160,11 @@ def get_active_session() -> FabricSession:
     return _lakehouse_session
 
 
+def get_fabric_session() -> FabricSession:
+    """Preferred alias for the Lakehouse Fabric SQL session."""
+    return get_active_session()
+
+
 def _get_warehouse_session() -> FabricSession:
     """Return the module-level Warehouse session (read + write)."""
     global _warehouse_session
@@ -172,6 +183,7 @@ def _get_warehouse_session() -> FabricSession:
 # ---------------------------------------------------------------------------
 def run_df(sql: str) -> pd.DataFrame:
     """Execute SQL against the Lakehouse and return a DataFrame."""
+    sql = _prepare_sql(sql)
     last_exc = None
     for attempt in range(MAX_RETRIES):
         try:
@@ -193,6 +205,7 @@ def run_df(sql: str) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 def execute_query(sql: str, params: Optional[list] = None) -> pd.DataFrame:
     """Parameterised Lakehouse SELECT."""
+    sql = _prepare_sql(sql)
     last_exc = None
     for attempt in range(MAX_RETRIES):
         try:
@@ -248,6 +261,7 @@ def get_warehouse_connection() -> pyodbc.Connection:
 # ---------------------------------------------------------------------------
 def run_warehouse_df(sql: str) -> pd.DataFrame:
     """SELECT from the Warehouse."""
+    sql = _prepare_sql(sql)
     last_exc = None
     for attempt in range(MAX_RETRIES):
         try:
