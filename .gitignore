@@ -1,0 +1,113 @@
+# ========================================
+# CRITICAL: Protect Sensitive Data
+# ========================================
+
+# Environment variables - NEVER commit these!
+.env
+.env.local
+.env.*.local
+_env
+_env.txt
+*.key
+*.pem
+*.p12
+
+# Secrets and credentials
+.streamlit/secrets.toml
+secrets.yml
+credentials.json
+api_keys.txt
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+.env.venv
+
+# IDE and editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*.swn
+*~
+.DS_Store
+Thumbs.db
+*.sublime-project
+*.sublime-workspace
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Streamlit specific
+.streamlit/cache/
+.streamlit/logger.log
+.streamlit/*.json
+
+# Logs
+*.log
+logs/
+*.log.gz
+
+# Temporary files
+*.tmp
+*.bak
+*.orig
+temp/
+tmp/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.mdb
+
+# OS specific
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Azure
+.azure/
+*.PublishSettings
+*.azureCredentials
+
+# Project specific
+data/raw/
+data/processed/
+output/
+results/
+
+# Node modules (if using)
+node_modules/
+npm-debug.log
+
+# Large files
+*.zip
+*.tar.gz
+*.rar
+
+# CI/CD
+.github/workflows/secrets*.yml
+.gitlab-ci.yml
