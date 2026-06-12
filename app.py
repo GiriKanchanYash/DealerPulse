@@ -3454,10 +3454,10 @@ EXAMPLES (Follow these patterns exactly):
     -- Rationale: compute average lead time per dealer and rank
     <SQL>
     WITH avg_lead AS (
-      SELECT dealer_name, ROUND(AVG(AVG_ORDER_LEAD_TIME_DAYS),1) AS avg_lead_days
+      SELECT DEALER_NAME, ROUND(AVG(AVG_ORDER_LEAD_TIME_DAYS),1) AS avg_lead_days
       FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_order_lead_time
       WHERE AVG_ORDER_LEAD_TIME_DAYS IS NOT NULL
-      GROUP BY dealer_name
+      GROUP BY DEALER_NAME
     )
     SELECT TOP 500 al.dealer_name, al.avg_lead_days
     FROM avg_lead al
@@ -3578,10 +3578,10 @@ def fetch_dealer_health_scores(_session, filters=None):
         
         # Resolve dealer column names from local semantic model (fallback)
         # Use uppercase DEALER_NAME - matches actual Fabric view column names
-        dealer_col_margin = get_expr_column('vw_gross_profit_margin', 'dealer_name')
-        dealer_col_tat = get_expr_column('vw_average_repair_turnaround_time', 'dealer_name')
-        dealer_col_lead = get_expr_column('vw_order_lead_time', 'dealer_name')
-        dealer_col_ccc = get_expr_column('vw_cash_conversion_cycle', 'dealer_name')
+        dealer_col_margin = get_expr_column('vw_gross_profit_margin', 'DEALER_NAME')
+        dealer_col_tat = get_expr_column('vw_average_repair_turnaround_time', 'DEALER_NAME')
+        dealer_col_lead = get_expr_column('vw_order_lead_time', 'DEALER_NAME')
+        dealer_col_ccc = get_expr_column('vw_cash_conversion_cycle', 'DEALER_NAME')
         dealer_name_ccc = get_expr_column('vw_cash_conversion_cycle', 'DEALER_NAME')
 
         # Query margin WITHOUT COALESCE (removes NULL distortion)
@@ -3600,7 +3600,7 @@ def fetch_dealer_health_scores(_session, filters=None):
         # Query TAT - resolve dealer column via semantic model
         try:
             tat_df = _session.sql(f"""
-                SELECT {dealer_col_tat} AS dealer_name, AVG(AVG_TURNAROUND_HOURS) AS AVG_TAT
+                SELECT {dealer_col_tat} AS DEALER_NAME, AVG(AVG_TURNAROUND_HOURS) AS AVG_TAT
                 FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_average_repair_turnaround_time
                 GROUP BY {dealer_col_tat}
             """).to_pandas()
@@ -4456,10 +4456,10 @@ def fetch_journey_counts(_session, filters=None):
                 -- Enhancement 5: avg(delivery_date - order_date) as Avg Lead Days
                 ROUND(AVG(
                     CASE WHEN DELIVERY_DATE IS NOT NULL AND ORDER_DATE IS NOT NULL
-                         THEN DATEDIFF('day', ORDER_DATE, DELIVERY_DATE)
+                         THEN DATEDIFF(DAY, ORDER_DATE, DELIVERY_DATE)
                          ELSE LEAD_TIME_DAYS
                     END
-                ), 1)                                                     AS AVG_LEAD_DAYS
+                ), 1)  AS AVG_LEAD_DAYS
             FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_transaction_lineage
             {where_clause}
         """).to_pandas()
@@ -10526,7 +10526,7 @@ def render_transaction_lineage(session, filters=None):
             where_clauses.append(f"UPPER(INVOICE_STATUS) = UPPER('{inv}')")
         where_clause = " AND ".join(where_clauses)
         total_rows = session.sql(f"""
-            SELECT COUNT(*) AS total
+            SELECT COUNT(*) AS TOTAL
             FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_transaction_lineage
             WHERE {where_clause}
         """).to_pandas()['TOTAL'][0]
