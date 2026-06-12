@@ -415,7 +415,7 @@ def _save_yaml_locally(yaml_content: str, filename: str = "schema_metadata.yaml"
 
 def _upload_yaml_to_snowflake(session, yaml_content: str, filename: str = "schema_metadata.yaml") -> bool:
     """Stage upload is disabled for Fabric compatibility."""
-    logging.info("[YAML UPLOAD] Stage upload skipped (Fabric compatibility mode)")
+    logging.info("[YAML UPLOAD] Stage upload skipped")
     return False
 
 
@@ -966,7 +966,7 @@ def _create_fallback_yaml_model() -> Dict:
             {
                 "name": "dealer_health_scorecard",
                 "question": "Show dealer health",
-                "sql": "SELECT * FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_dealer_location LIMIT 10"
+                "sql": "SELECT TOP 10 * FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_dealer_location"
             }
         ]
     }
@@ -1165,7 +1165,7 @@ def _semantic_build_verified_query(view: str, columns: List[Dict], db: str, sche
     elif sel:
         sql = f"SELECT\n" + ",\n".join(sel) + f"\nFROM {tbl} {alias}\nORDER BY {order};"
     else:
-        sql = f"SELECT * FROM {tbl} LIMIT 1000;"
+        sql = f"SELECT TOP 1000 * FROM {tbl};"
     
     entry: Dict[str, Any] = {
         "name": qname,
@@ -2072,9 +2072,8 @@ class GenieLongTermMemory:
         try:
             user_esc = (self._user or 'UNKNOWN').replace("'", "''")
 
-            df = self.session.sql(f"""
-                SELECT QUESTION, RESPONSE_JSON
-                FROM (
+            _mem_sql = f"""
+                WITH ranked AS (
                     SELECT
                         QUESTION,
                         RESPONSE_JSON,
@@ -2082,14 +2081,19 @@ class GenieLongTermMemory:
                             PARTITION BY QUESTION
                             ORDER BY CREATED_AT DESC
                         ) AS rn
-                    FROM {Config.WAREHOUSE_SCHEMA}.INFORMATION_MART.GENIE_QUERY_HISTORY
+                    FROM [{Config.WAREHOUSE_SCHEMA}].[GENIE_QUERY_HISTORY]
                     WHERE USER_NAME = '{user_esc}'
                     AND CREATED_AT >= DATEADD(day, -30, GETUTCDATE())
                 )
+                SELECT TOP {self.max_history} QUESTION, RESPONSE_JSON
+                FROM ranked
                 WHERE rn = 1
-                ORDER BY 1
-                LIMIT {self.max_history}
-            """).to_pandas()
+                ORDER BY QUESTION
+            """
+            # Use run_warehouse_df (Warehouse connection) not self.session (Lakehouse connection)
+            # so the Warehouse table is reachable without full 3-part database qualification
+            from db_service import run_warehouse_df as _run_wh_df
+            df = _run_wh_df(_mem_sql)
 
             if df.empty:
                 print(f"[MEMORY] No history found for {self._user}",
@@ -2228,25 +2232,25 @@ class GenieChatPersistence:
 
     # ── table bootstrap ───────────────────────────────────────────────────────
     def _init_table(self) -> None:
-        """Create the chat-sessions table if it doesn't exist yet (Fabric/T-SQL compatible)."""
+        """Create the chat-sessions table if it doesn't exist yet (Fabric Warehouse compatible)."""
+        from db_service import run_warehouse_non_query as _wh_non_query
         try:
-            self.session.sql(f"""
+            _wh_non_query(f"""
                 IF OBJECT_ID(N'{self.TABLE}', N'U') IS NULL
                 BEGIN
                     CREATE TABLE {self.TABLE} (
-                        SESSION_ID    NVARCHAR(128)  NOT NULL,
-                        USER_NAME     NVARCHAR(256)  NOT NULL,
+                        SESSION_ID    VARCHAR(128)   NOT NULL,
+                        USER_NAME     VARCHAR(256)   NOT NULL,
                         TURN_INDEX    INT            NOT NULL,
-                        ROLE          NVARCHAR(64)   NOT NULL,
-                        CONTENT       NVARCHAR(MAX)  NOT NULL,
-                        CREATED_AT    DATETIME2      NOT NULL DEFAULT GETUTCDATE(),
-                        SQL_USED      NVARCHAR(MAX),
-                        SOURCE        NVARCHAR(256),
-                        SESSION_LABEL NVARCHAR(256),
-                        CONSTRAINT PK_GENIE_CHAT PRIMARY KEY (SESSION_ID, TURN_INDEX)
+                        ROLE          VARCHAR(64)    NOT NULL,
+                        CONTENT       VARCHAR(MAX)   NOT NULL,
+                        CREATED_AT    DATETIME2      NOT NULL,
+                        SQL_USED      VARCHAR(MAX),
+                        SOURCE        VARCHAR(256),
+                        SESSION_LABEL VARCHAR(256)
                     )
                 END
-            """).collect()
+            """)
             self._table_ok = True
             print("[CHAT PERSIST] Table ready.", file=__import__('sys').stderr)
         except Exception as e:
@@ -2269,10 +2273,11 @@ class GenieChatPersistence:
         if not self._table_ok or not self.session:
             return
         try:
+            from db_service import run_warehouse_non_query as _wh_non_query
             def _esc(s):
                 return str(s or "").replace("'", "''")[:4000]
 
-            self.session.sql(f"""
+            _wh_non_query(f"""
                 INSERT INTO {self.TABLE}
                     (SESSION_ID, USER_NAME, TURN_INDEX, ROLE,
                      CONTENT, SQL_USED, SOURCE, SESSION_LABEL)
@@ -2286,7 +2291,7 @@ class GenieChatPersistence:
                     '{_esc(source)}',
                     '{_esc(session_label)}'
                 )
-            """).collect()
+            """)
         except Exception as e:
             print(f"[CHAT PERSIST] save_turn failed: {str(e)[:150]}",
                   file=__import__('sys').stderr)
@@ -2303,9 +2308,10 @@ class GenieChatPersistence:
         if not self._table_ok or not self.session:
             return []
         try:
+            from db_service import run_warehouse_df as _wh_df
             user_esc = self._user.replace("'", "''")
 
-            meta_df = self.session.sql(f"""
+            meta_df = _wh_df(f"""
                 SELECT
                     SESSION_ID,
                     MAX(SESSION_LABEL)  AS SESSION_LABEL,
@@ -2317,8 +2323,8 @@ class GenieChatPersistence:
                                             GETUTCDATE())
                 GROUP BY SESSION_ID
                 ORDER BY LAST_AT DESC
-                LIMIT 20
-            """).to_pandas()
+                OFFSET 0 ROWS FETCH NEXT 20 ROWS ONLY
+            """)
 
             if meta_df.empty:
                 return []
@@ -2351,17 +2357,18 @@ class GenieChatPersistence:
         if not self._table_ok or not self.session:
             return []
         try:
+            from db_service import run_warehouse_df as _wh_df
             user_esc = self._user.replace("'", "''")
             sid_esc  = session_id.replace("'", "''")
 
-            msgs_df = self.session.sql(f"""
+            msgs_df = _wh_df(f"""
                 SELECT ROLE, CONTENT, CREATED_AT, SQL_USED, SOURCE
                 FROM {self.TABLE}
                 WHERE SESSION_ID = '{sid_esc}'
                 AND   USER_NAME  = '{user_esc}'
                 ORDER BY TURN_INDEX ASC
-                LIMIT {self.MAX_TURNS_RESTORE}
-            """).to_pandas()
+                OFFSET 0 ROWS FETCH NEXT {self.MAX_TURNS_RESTORE} ROWS ONLY
+            """)
 
             messages = []
             for _, mrow in msgs_df.iterrows():
@@ -2387,10 +2394,11 @@ class GenieChatPersistence:
         if not self._table_ok or not self.session:
             return
         try:
-            self.session.sql(f"""
+            from db_service import run_warehouse_non_query as _wh_non_query
+            _wh_non_query(f"""
                 DELETE FROM {self.TABLE}
                 WHERE CREATED_AT < DATEADD(day, -{keep_days}, GETUTCDATE())
-            """).collect()
+            """)
             print(f"[CHAT PERSIST] Purged rows older than {keep_days} days.",
                   file=__import__('sys').stderr)
         except Exception as e:
@@ -2463,7 +2471,7 @@ class DealerPerformanceForecaster:
         WHERE DEALER_NAME = '{dealer_name}'
         AND PERIOD_YEAR >= YEAR(CAST(GETUTCDATE() AS DATE)) - 1
         ORDER BY PERIOD_YEAR DESC
-        LIMIT 52
+        OFFSET 0 ROWS FETCH NEXT 52 ROWS ONLY
         """
         
         try:
@@ -3542,7 +3550,7 @@ def validate_view_schemas(_session):
     missing_columns = {}
     for view_name, expected_cols in required_views.items():
         try:
-            result = _session.sql(f"SELECT * FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.{view_name} LIMIT 1").to_pandas()
+            result = _session.sql(f"SELECT TOP 1 * FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.{view_name}").to_pandas()
             actual_cols = [c.upper() for c in result.columns]
             missing = [c for c in expected_cols if c.upper() not in actual_cols]
             if missing:
@@ -3569,6 +3577,7 @@ def fetch_dealer_health_scores(_session, filters=None):
         LOOKBACK_DAYS = 90                 # Only recent data
         
         # Resolve dealer column names from local semantic model (fallback)
+        # Use uppercase DEALER_NAME - matches actual Fabric view column names
         dealer_col_margin = get_expr_column('vw_gross_profit_margin', 'dealer_name')
         dealer_col_tat = get_expr_column('vw_average_repair_turnaround_time', 'dealer_name')
         dealer_col_lead = get_expr_column('vw_order_lead_time', 'dealer_name')
@@ -3632,18 +3641,8 @@ def fetch_dealer_health_scores(_session, filters=None):
         # Fill missing values with 0
         merged = merged.fillna(0)
         
-        # Get dealer names from CCC view to enhance output
-        try:
-            name_df = _session.sql(f"""
-                SELECT DISTINCT {dealer_col_ccc} AS dealer_name, {dealer_name_ccc} AS DEALER_NAME
-                FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_cash_conversion_cycle
-                WHERE {dealer_col_ccc} IS NOT NULL AND {dealer_name_ccc} IS NOT NULL
-            """).to_pandas()
-            name_df.columns = [c.lower() for c in name_df.columns]
-            if 'dealer_name' in name_df.columns and 'dealer_name' in name_df.columns:
-                merged = pd.merge(merged, name_df[['dealer_name', 'dealer_name']], on='dealer_name', how='left', suffixes=('_x', ''))
-        except Exception:
-            pass  # If name lookup fails, continue without names
+        # Dealer name is already in the 'dealer_name' column from the margin/tat/lead queries
+        # (DEALER_NAME aliased as dealer_name). No additional name lookup needed.
         
         # Ensure dealer_name exists
         if 'dealer_name' not in merged.columns:
@@ -4534,7 +4533,7 @@ def fetch_transaction_lineage(_session, filters=None, page=None, page_size=None)
         FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_transaction_lineage
         {where_clause}
         ORDER BY ORDER_DATE DESC
-        LIMIT {page_size} OFFSET {offset}
+        OFFSET {offset} ROWS FETCH NEXT {page_size} ROWS ONLY
         """).to_pandas()
 
         # ensure lead time is integer for display/analysis
@@ -6209,7 +6208,7 @@ def fetch_revenue_trend(_session):
             PREV_REVENUE
         FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_dealer_revenue_growth
         ORDER BY dealer_name, PERIOD_YEAR DESC
-        LIMIT 50
+        OFFSET 0 ROWS FETCH NEXT 50 ROWS ONLY
         """
         return run_df(query).to_pandas()
     except Exception as e:
@@ -6229,7 +6228,7 @@ def fetch_profit_margin_by_dealer(_session):
         WHERE DEALER_NAME IS NOT NULL
         GROUP BY DEALER_NAME
         ORDER BY GROSS_PROFIT_MARGIN_PCT DESC
-        LIMIT 15
+        OFFSET 0 ROWS FETCH NEXT 15 ROWS ONLY
         """
         result = run_df(query).to_pandas()
         result.columns = result.columns.str.lower()
@@ -6250,7 +6249,7 @@ def fetch_sales_by_product_category(_session):
         FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_sales_per_product_category
         GROUP BY PRODUCT_CATEGORY
         ORDER BY total_revenue DESC
-        LIMIT 20
+        OFFSET 0 ROWS FETCH NEXT 20 ROWS ONLY
         """
         result = run_df(query).to_pandas()
         result.columns = result.columns.str.lower()
@@ -6274,7 +6273,7 @@ def fetch_cash_conversion_cycle_trend(_session):
         WHERE DEALER_NAME IS NOT NULL
         GROUP BY DEALER_NAME
         ORDER BY CCC DESC
-        LIMIT 10
+        OFFSET 0 ROWS FETCH NEXT 10 ROWS ONLY
         """
         result = run_df(query).to_pandas()
         result.columns = result.columns.str.lower()
@@ -6295,7 +6294,7 @@ def fetch_order_lead_time_distribution(_session):
         FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_order_lead_time
         GROUP BY DEALER_NAME
         ORDER BY avg_lead_time DESC
-        LIMIT 10
+        OFFSET 0 ROWS FETCH NEXT 10 ROWS ONLY
         """
         result = run_df(query).to_pandas()
         result.columns = result.columns.str.lower()
@@ -7671,7 +7670,7 @@ def compile_check_sql(session, sql: str) -> Tuple[bool, Optional[str]]:
         sql_clean = _qualify_sql_table_names(sql_clean)
         print(f"[TIMING] Starting EXPLAIN compile check...")
         print(f"[SQL DEBUG] Checking SQL:\n{sql_clean[:400]}")  # Log first 400 chars
-        session.sql(f"EXPLAIN USING TEXT {sql_clean}").collect()
+        session.sql(f"EXPLAIN {sql_clean}").collect()
         t1 = time_module.time()
         print(f"[TIMING] EXPLAIN compile check passed: {t1-t0:.2f}s")
         return True, None
@@ -7812,7 +7811,7 @@ SELECT
   t.PERIOD_YEAR
 FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_average_repair_turnaround_time t
 ORDER BY t.DEALER_NAME
-LIMIT 100;
+OFFSET 0 ROWS FETCH NEXT 100 ROWS ONLY;
 
 EXAMPLE 1 - CORRECT MULTI-TABLE JOIN:
 SELECT 
@@ -7822,7 +7821,7 @@ SELECT
 FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_dealer_contribution_margin  cm
 LEFT JOIN {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_average_repair_turnaround_time t 
   ON cm.DEALER_NAME = t.DEALER_NAME
-LIMIT 100;
+OFFSET 0 ROWS FETCH NEXT 100 ROWS ONLY;
 
 EXAMPLE 2 - CORRECT MULTI-TABLE WITH CTE:
 WITH margin_data AS (
@@ -7842,7 +7841,7 @@ SELECT
 FROM margin_data m
 LEFT JOIN service_data s ON m.DEALER_NAME = s.DEALER_NAME
 ORDER BY m.avg_margin DESC
-LIMIT 50;
+OFFSET 0 ROWS FETCH NEXT 50 ROWS ONLY;
 
 ==============================================================================
 AVAILABLE TABLES AND COLUMNS:
@@ -8888,7 +8887,7 @@ def generate_forecast_prediction_text(session, dealer_name: str, forecast_result
             SELECT AVG(GROSS_PROFIT_MARGIN_PCT) as avg_margin
             FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_gross_profit_margin
             WHERE DEALER_NAME = '{dealer_name}'
-            LIMIT 12
+            OFFSET 0 ROWS FETCH NEXT 12 ROWS ONLY
             """
             margin_df = session.sql(margin_query).to_pandas()
             if not margin_df.empty and 'avg_margin' in margin_df.columns:
@@ -8904,7 +8903,7 @@ def generate_forecast_prediction_text(session, dealer_name: str, forecast_result
             SELECT AVG(CASH_CONVERSION_CYCLE_DAYS) as avg_ccc
             FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_cash_conversion_cycle
             WHERE DEALER_NAME = '{dealer_name}'
-            LIMIT 12
+            OFFSET 0 ROWS FETCH NEXT 12 ROWS ONLY
             """
             ccc_df = session.sql(ccc_query).to_pandas()
             if not ccc_df.empty and 'avg_ccc' in ccc_df.columns:
@@ -10416,7 +10415,7 @@ def render_transaction_lineage(session, filters=None):
                 {lineage_filter_clause(base_filters)}
                 AND ORDER_DATE BETWEEN '{from_date_str}' AND '{to_date_str}'
                 ORDER BY TRANSACTION_ID
-                LIMIT 1000
+                OFFSET 0 ROWS FETCH NEXT 1000 ROWS ONLY
             """).to_pandas()
             tx_options = ["All"] + df_tx['TRANSACTION_ID'].astype(str).tolist()
         except Exception:
@@ -10429,7 +10428,7 @@ def render_transaction_lineage(session, filters=None):
                 FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_transaction_lineage
                 WHERE INVOICE_STATUS IS NOT NULL
                 ORDER BY INVOICE_STATUS
-                LIMIT 50
+                OFFSET 0 ROWS FETCH NEXT 50 ROWS ONLY
             """).to_pandas()
             invoice_status_options = ["All"] + df_inv['INVOICE_STATUS'].astype(str).tolist()
         except Exception:
@@ -12504,7 +12503,7 @@ def render_dealer_life_cycle(session):
                         WHERE {' AND '.join(parts)}
                         GROUP BY PRODUCT_CATEGORY
                         ORDER BY TOTAL_REVENUE DESC
-                        LIMIT 10
+                        OFFSET 0 ROWS FETCH NEXT 10 ROWS ONLY
                     """
 
                 cat_df = session.sql(_build_cat_q(cur_cat_filter)).to_pandas()
@@ -12955,7 +12954,7 @@ def render_replenishment_agent(session):
             SELECT DISTINCT PRODUCT_CATEGORY
             FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_sales_volume
             WHERE PRODUCT_CATEGORY IS NOT NULL
-            LIMIT 20
+            OFFSET 0 ROWS FETCH NEXT 20 ROWS ONLY
         """).to_pandas()
         prod_df.columns = prod_df.columns.str.lower()
         products_list = prod_df['product_category'].dropna().tolist()
@@ -12968,7 +12967,7 @@ def render_replenishment_agent(session):
                 SELECT DISTINCT PRODUCT_CATEGORY
                 FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_transaction_lineage
                 WHERE PRODUCT_CATEGORY IS NOT NULL
-                LIMIT 20
+                OFFSET 0 ROWS FETCH NEXT 20 ROWS ONLY
             """).to_pandas()
             prod_df2.columns = prod_df2.columns.str.lower()
             products_list = prod_df2['product_category'].dropna().tolist()
@@ -13751,7 +13750,8 @@ def render_delivery_tracking_agent(session):
             WHERE DELIVERY_FLAG = 'N'
               AND ORDER_DATE >= DATEADD(day, -{p_scan}, CAST(GETUTCDATE() AS DATE))
               {dealer_where}
-            ORDER BY ORDER_DATE ASC LIMIT 200
+            ORDER BY ORDER_DATE ASC
+            OFFSET 0 ROWS FETCH NEXT 200 ROWS ONLY
         """).to_pandas()
         open_df.columns = open_df.columns.str.upper()
     except Exception as e:
@@ -14251,7 +14251,7 @@ def render_revenue_recovery_agent(session):
                 WHERE COALESCE(p.PREV_REV, 0) > 0
                   AND COALESCE(c.CURR_REV, 0) < COALESCE(p.PREV_REV,0) * (1 - {thresh}/100.0)
                 ORDER BY REV_CHANGE_PCT ASC
-                LIMIT {max_d}
+                OFFSET 0 ROWS FETCH NEXT {max_d} ROWS ONLY
             """
             try:
                 rev_df = session.sql(_split_sql).to_pandas()
