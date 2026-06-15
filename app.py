@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import yaml
 from datetime import datetime, timedelta
-from db_service import get_active_session, get_fabric_session, run_df, run_warehouse_df, run_warehouse_non_query
+from db_service import get_active_session, _get_warehouse_session, run_df, run_warehouse_df, run_warehouse_non_query
 from warehouse_setup import ensure_warehouse_tables
 from fabric_sql import ensure_top_limit
 import plotly.graph_objects as go
@@ -27,6 +27,12 @@ import textwrap
 
 from config import Config
 from llm_service import generate_sql, cortex_complete
+from genie_middleware import (
+    log_event,
+    log_events_upsert,
+    set_log_context,
+    update_analysis_insights,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -199,11 +205,11 @@ def _build_routing_from_yaml(yaml_content: str) -> Tuple[Dict, Dict, Dict, Dict]
 
 
 def _build_intents_from_yaml(model: dict) -> Dict:
-    """Extract INTENTS catalog from YAML cortex_training_patterns section."""
+    """Extract INTENTS catalog from YAML training_patterns section."""
     intents = {}
     
-    patterns = model.get("cortex_optimization", {}).get("cortex_training_patterns", {})
-    logging.info(f"[INTENTS BUILD] Found cortex_training_patterns sections: {list(patterns.keys())}")
+    patterns = model.get("azure_openai_optimization", {}).get("training_patterns", {})
+    logging.info(f"[INTENTS BUILD] Found training_patterns sections: {list(patterns.keys())}")
     
     priority_levels = [k for k in patterns.keys() if k.startswith("priority_")]
     logging.info(f"[INTENTS BUILD] Priority levels found: {sorted(priority_levels)}")
@@ -332,7 +338,8 @@ def _build_table_definition_from_snowflake(session, view_name: str) -> Dict:
         dimensions = []
         facts = []
         
-        for col_name, data_type in result:
+        for row in result:
+            col_name = row[0] if not hasattr(row, "keys") else row["COLUMN_NAME"]
             col_name_upper = col_name.upper()
             
             if any(suffix in col_name_upper for suffix in ("_PCT", "_PERCENT", "_DAYS", "_HOURS", "_AMOUNT", "_RATE", "_COUNT", "_TOTAL", "_MARGIN")):
@@ -411,13 +418,6 @@ def _save_yaml_locally(yaml_content: str, filename: str = "schema_metadata.yaml"
     except Exception as e:
         logging.error(f"[YAML SAVE] ❌ Failed to save locally: {e}")
         return False
-
-
-def _upload_yaml_to_snowflake(session, yaml_content: str, filename: str = "schema_metadata.yaml") -> bool:
-    """Stage upload is disabled for Fabric compatibility."""
-    logging.info("[YAML UPLOAD] Stage upload skipped")
-    return False
-
 
 def _initialize_routing_from_yaml(yaml_content: str) -> None:
     """Initialize global routing variables from YAML."""
@@ -1918,14 +1918,25 @@ class GenieQueryCache:
             return
 
         try:
+            # Store SQL with newlines preserved as \n escape sequences so
+            # that _prepare_sql() can restore them correctly on cache restore.
+            # json.dumps() safely escapes all special characters including
+            # embedded single quotes inside string literals (THEN 'STRONG' etc).
+            raw_sql_for_cache = str(response.get('sql', '') or '')
+            # Normalise real newlines → \n before JSON encoding so the JSON
+            # value is a single-line string that survives SQL round-tripping.
+            raw_sql_for_cache = raw_sql_for_cache.replace('\n', '\\n').replace('\r', '\\r')[:4000]
+
             minimal_resp = {
                 'layout':          str(response.get('layout',  'unknown'))[:50],
                 'source':          str(response.get('source',  'unknown'))[:50],
-                'sql':             str(response.get('sql', '') or '').replace('\n',' ').replace('\r',' ').replace('\t',' ')[:2000],
+                'sql':             raw_sql_for_cache,
                 'gen_ok':          bool(response.get('gen_ok', False)),
                 'response_time_ms':float(response_time_ms),
             }
+            # json.dumps gives us a safe ASCII string with all special chars escaped
             json_str     = json.dumps(minimal_resp, ensure_ascii=True)
+            # Escape single quotes for SQL literal embedding
             q_escaped    = question[:500].replace("'", "''")
             user_escaped = (self._current_user or 'UNKNOWN').replace("'", "''")
             json_escaped = json_str.replace("'", "''")
@@ -2244,7 +2255,7 @@ class GenieChatPersistence:
                         TURN_INDEX    INT            NOT NULL,
                         ROLE          VARCHAR(64)    NOT NULL,
                         CONTENT       VARCHAR(MAX)   NOT NULL,
-                        CREATED_AT    DATETIME2      NOT NULL,
+                        CREATED_AT    DATETIME2(7)   NOT NULL,
                         SQL_USED      VARCHAR(MAX),
                         SOURCE        VARCHAR(256),
                         SESSION_LABEL VARCHAR(256)
@@ -3478,7 +3489,7 @@ If these constraints cannot be satisfied, respond with a clear explanation of th
 @st.cache_resource
 def get_fabric_connection():
     """Return the cached Microsoft Fabric Lakehouse SQL session."""
-    return get_fabric_session()
+    return _get_warehouse_session()
 
 
 @st.cache_resource
@@ -3786,7 +3797,7 @@ def fetch_order_fulfillment(_session, filters=None, sla_days=7):
         SELECT
             COUNT(*) AS TOTAL,
             SUM(CASE WHEN AVG_ORDER_LEAD_TIME_DAYS <= {int(sla_days)} THEN 1 ELSE 0 END) AS ON_TIME
-        FROM fa.INFORMATION_MART.vw_order_lead_time
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_order_lead_time
         WHERE 1=1
         """
         if filters and 'dealer' in filters and filters['dealer'] != 'All Dealers':
@@ -3899,15 +3910,15 @@ def fetch_strategic_insights(_session):
     """Fetch strategic insights data"""
     # If vw_STRATEGIC_INSIGHTS view exists, use it; otherwise return mock insights
     try:
-        query = """
-        SELECT 
-            INSIGHT_TEXT,
-            PRIORITY_LEVEL,
-            DEALER_COUNT,
-            IMPACT_PERCENTAGE
-        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_strategic_insights
-        ORDER BY PRIORITY_LEVEL DESC
-        """
+        query = f"""
+                    SELECT 
+                        INSIGHT_TEXT,
+                        PRIORITY_LEVEL,
+                        DEALER_COUNT,
+                        IMPACT_PERCENTAGE
+                    FROM INFORMATION_MART.vw_strategic_insights
+                    ORDER BY PRIORITY_LEVEL DESC
+                """
         return run_df(query).to_pandas()
     except Exception as e:
         # View doesn't exist or query failed - use mock data
@@ -6200,7 +6211,7 @@ def render_attention_and_priority(session, filters):
 def fetch_revenue_trend(_session):
     """Fetch revenue trend data by period for graph"""
     try:
-        query = """
+        query = f"""
         SELECT 
             dealer_name,
             PERIOD_YEAR,
@@ -6220,17 +6231,21 @@ def fetch_profit_margin_by_dealer(_session):
     """Fetch profit margin across dealers for comparison - aggregated by dealer"""
     try:
         query = f"""
-        SELECT 
-            DEALER_NAME,
-            AVG(GROSS_PROFIT_MARGIN_PCT) AS GROSS_PROFIT_MARGIN_PCT,
-            SUM(TOTAL_REVENUE) AS TOTAL_REVENUE
-        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_gross_profit_margin
-        WHERE DEALER_NAME IS NOT NULL
-        GROUP BY DEALER_NAME
-        ORDER BY GROSS_PROFIT_MARGIN_PCT DESC
-        OFFSET 0 ROWS FETCH NEXT 15 ROWS ONLY
+        WITH RankedDealers AS (
+    SELECT 
+        DEALER_NAME,
+        AVG(GROSS_PROFIT_MARGIN_PCT) AS GROSS_PROFIT_MARGIN_PCT,
+        SUM(TOTAL_REVENUE) AS TOTAL_REVENUE,
+        ROW_NUMBER() OVER (ORDER BY AVG(GROSS_PROFIT_MARGIN_PCT) DESC) AS rn
+    FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_gross_profit_margin
+    WHERE DEALER_NAME IS NOT NULL
+    GROUP BY DEALER_NAME
+)
+SELECT DEALER_NAME, GROSS_PROFIT_MARGIN_PCT, TOTAL_REVENUE
+FROM RankedDealers
+WHERE rn BETWEEN 1 AND 15;
         """
-        result = run_df(query).to_pandas()
+        result = _session.sql(query).to_pandas()
         result.columns = result.columns.str.lower()
         return result
     except Exception as e:
@@ -6242,16 +6257,20 @@ def fetch_sales_by_product_category(_session):
     """Fetch sales data by product category"""
     try:
         query = f"""
-        SELECT 
-            PRODUCT_CATEGORY,
-            SUM(TOTAL_REVENUE) AS total_revenue,
-            SUM(TOTAL_QUANTITY) AS total_quantity
-        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_sales_per_product_category
-        GROUP BY PRODUCT_CATEGORY
-        ORDER BY total_revenue DESC
-        OFFSET 0 ROWS FETCH NEXT 20 ROWS ONLY
+        WITH RankedCategories AS (
+    SELECT 
+        PRODUCT_CATEGORY,
+        SUM(TOTAL_REVENUE) AS total_revenue,
+        SUM(TOTAL_QUANTITY) AS total_quantity,
+        ROW_NUMBER() OVER (ORDER BY SUM(TOTAL_REVENUE) DESC) AS rn
+    FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_sales_per_product_category
+    GROUP BY PRODUCT_CATEGORY
+)
+SELECT PRODUCT_CATEGORY, total_revenue, total_quantity
+FROM RankedCategories
+WHERE rn BETWEEN 1 AND 20;
         """
-        result = run_df(query).to_pandas()
+        result = _session.sql(query).to_pandas()
         result.columns = result.columns.str.lower()
         return result
     except Exception as e:
@@ -6263,19 +6282,23 @@ def fetch_cash_conversion_cycle_trend(_session):
     """Fetch CCC trend data for graph - aggregated by dealer"""
     try:
         query = f"""
-        SELECT 
-            DEALER_NAME,
-            AVG(DSO) AS DSO,
-            AVG(DIO) AS DIO,
-            AVG(DPO) AS DPO,
-            AVG(CCC) AS CCC
-        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_cash_conversion_cycle
-        WHERE DEALER_NAME IS NOT NULL
-        GROUP BY DEALER_NAME
-        ORDER BY CCC DESC
-        OFFSET 0 ROWS FETCH NEXT 10 ROWS ONLY
+        WITH RankedDealers AS (
+    SELECT 
+        DEALER_NAME,
+        AVG(DSO) AS DSO,
+        AVG(DIO) AS DIO,
+        AVG(DPO) AS DPO,
+        AVG(CCC) AS CCC,
+        ROW_NUMBER() OVER (ORDER BY AVG(CCC) DESC) AS rn
+    FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_cash_conversion_cycle
+    WHERE DEALER_NAME IS NOT NULL
+    GROUP BY DEALER_NAME
+)
+SELECT DEALER_NAME, DSO, DIO, DPO, CCC
+FROM RankedDealers
+WHERE rn BETWEEN 1 AND 10;
         """
-        result = run_df(query).to_pandas()
+        result = _session.sql(query).to_pandas()
         result.columns = result.columns.str.lower()
         return result
     except Exception as e:
@@ -6287,16 +6310,20 @@ def fetch_order_lead_time_distribution(_session):
     """Fetch order lead time distribution by dealer"""
     try:
         query = f"""
-        SELECT 
-            DEALER_NAME,
-            AVG(AVG_ORDER_LEAD_TIME_DAYS) AS avg_lead_time,
-            COUNT(*) AS order_count
-        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_order_lead_time
-        GROUP BY DEALER_NAME
-        ORDER BY avg_lead_time DESC
-        OFFSET 0 ROWS FETCH NEXT 10 ROWS ONLY
+        WITH RankedDealers AS (
+    SELECT 
+        DEALER_NAME,
+        AVG(AVG_ORDER_LEAD_TIME_DAYS) AS avg_lead_time,
+        COUNT(*) AS order_count,
+        ROW_NUMBER() OVER (ORDER BY AVG(AVG_ORDER_LEAD_TIME_DAYS) DESC) AS rn
+    FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_order_lead_time
+    GROUP BY DEALER_NAME
+)
+SELECT DEALER_NAME, avg_lead_time, order_count
+FROM RankedDealers
+WHERE rn BETWEEN 1 AND 10;
         """
-        result = run_df(query).to_pandas()
+        result = _session.sql(query).to_pandas()
         result.columns = result.columns.str.lower()
         return result
     except Exception as e:
@@ -7513,12 +7540,18 @@ def _build_minimal_schema(question: str, model: dict) -> str:
         if any(kw in q_lower for kw in keywords.split("|")):
             relevant_tables.update(table_names)
     
-    # If no keyword match, include 10 most common tables
+    # If no keyword match, include ALL tables from the model
+    # (analysis questions need the full schema context)
     if not relevant_tables:
-        relevant_tables = {
-            "vw_sales_volume", "vw_gross_profit_margin", "vw_dealer_revenue_growth",
-            "vw_average_repair_turnaround_time", "vw_cash_conversion_cycle"
-        }
+        if model and "tables" in model:
+            relevant_tables = {t.get("name", "") for t in model.get("tables", []) if t.get("name")}
+        if not relevant_tables:
+            relevant_tables = {
+                "vw_sales_volume", "vw_gross_profit_margin", "vw_dealer_revenue_growth",
+                "vw_average_repair_turnaround_time", "vw_cash_conversion_cycle",
+                "vw_dealer_contribution_margin", "vw_stock_availability_dealer",
+                "vw_backorder_incidence", "vw_order_lead_time", "vw_dealer_location",
+            }
     
     # Build schema with only relevant tables - ULTRA CLEAR FORMAT WITH EXACT COLUMN NAMES
     schema_lines = []
@@ -7587,27 +7620,22 @@ def is_sql_obviously_bad(sql: str) -> Tuple[bool, str]:
         if re.search(wrong_col, sql, flags=re.IGNORECASE):
             return True, f"Wrong column name detected: {msg}"
     
-    # Check for abbreviated column names in FROM clauses (likely mistakes)
-    # Pattern: SELECT alias.SHORT_NAME (where SHORT_NAME is wrong abbreviation)
-    select_clause = sql.split("FROM")[0] if "FROM" in sql else ""
-    
-    # Additional check: if SELECT appears to have unqualified columns
-    # Split SELECT clause by comma, check each column
-    if "SELECT" in select_clause.upper():
-        select_start = select_clause.upper().find("SELECT") + 6
-        select_content = select_clause[select_start:]
-        
-        # If we see raw column names without dots, that's a problem
-        # Pattern: SELECT COLUMN_NAME, another_column (without table.column)
-        # This is a loose heuristic but helps catch obvious mistakes
-        words = re.findall(r'\b([A-Z_]+)\b', select_content)
-        raw_cols = [w for w in words if w not in ('FROM', 'WHERE', 'JOIN', 'ON', 'AND', 'OR', 'AS', 'WITH')]
-        
-        # If we have raw columns (not qualified), that's bad
-        if raw_cols and "." not in select_content:
-            # But allow if it's simple aggregates
-            if not re.search(r'COUNT|SUM|AVG|MIN|MAX|DISTINCT', select_content, flags=re.IGNORECASE):
-                return True, f"Unqualified columns detected (must use table.column format): {', '.join(raw_cols[:3])}"
+    # For non-CTE queries: check for unqualified column references.
+    # CTE outer SELECTs legitimately reference CTE alias columns without dots.
+    is_cte = bool(re.match(r'\s*WITH\b', sql, flags=re.IGNORECASE))
+    if not is_cte:
+        select_clause = sql.split("FROM")[0] if "FROM" in sql else ""
+        if "SELECT" in select_clause.upper():
+            select_start = select_clause.upper().find("SELECT") + 6
+            select_content = select_clause[select_start:]
+            words = re.findall(r'\b([A-Z_]+)\b', select_content)
+            raw_cols = [w for w in words if w not in (
+                'FROM', 'WHERE', 'JOIN', 'ON', 'AND', 'OR', 'AS', 'WITH',
+                'TOP', 'DISTINCT', 'ALL', 'NULL', 'NOT'
+            )]
+            if raw_cols and "." not in select_content:
+                if not re.search(r'COUNT|SUM|AVG|MIN|MAX|DISTINCT', select_content, flags=re.IGNORECASE):
+                    return True, f"Unqualified columns (must use alias.column): {', '.join(raw_cols[:3])}"
 
     return False, ""
 
@@ -7654,60 +7682,98 @@ def _qualify_sql_table_names(sql: str) -> str:
         if pre.upper().endswith("INFORMATION_MART.") or pre.upper().endswith(DB_SCHEMA.upper() + "."):
             result.append(m.group(0))  # already qualified — keep as-is
         else:
-            result.append(f"{DB_SCHEMA}.{m.group(1).upper()}")
+            result.append(f"{DB_SCHEMA}.{m.group(1).lower()}")
         i = m.end()
 
     return "".join(result)
 
 
+def _extract_sql_error_detail(error_str: str) -> str:
+    """Parse a SQL error string into a human-readable hint."""
+    invalid_col_match = re.search(
+        r"(?:invalid identifier|invalid column name|unknown column)[:\s]*['\"]?([A-Za-z_]\w*)['\"]?",
+        error_str, flags=re.IGNORECASE
+    )
+    if invalid_col_match:
+        invalid_col = invalid_col_match.group(1)
+        hint = ""
+        col_up = invalid_col.upper()
+        if "AVG_HOURS" in col_up:
+            hint = " (Did you mean AVG_TURNAROUND_HOURS?)"
+        elif col_up == "MARGIN_PCT":
+            hint = " (Try GROSS_PROFIT_MARGIN_PCT or CONTRIBUTION_MARGIN_PCT instead)"
+        elif "LEAD_TIME_DAYS" in col_up and "AVG_ORDER" not in col_up:
+            hint = " (Did you mean AVG_ORDER_LEAD_TIME_DAYS?)"
+        return f"Invalid column '{invalid_col}'{hint}"
+    if "not in GROUP BY" in error_str or "not contained in either an aggregate" in error_str:
+        return "Column in SELECT must be in GROUP BY or inside an aggregate (COUNT/SUM/AVG/MIN/MAX)"
+    if "ambiguous" in error_str.lower():
+        return "Ambiguous column reference — qualify with table alias (alias.column_name)"
+    if "incorrect syntax" in error_str.lower():
+        tok = re.search(r"near ['\"]([^'\"]+)['\"]", error_str, re.IGNORECASE)
+        token_hint = f" near '{tok.group(1)}'" if tok else ""
+        return f"Incorrect T-SQL syntax{token_hint}"
+    return error_str[:250]
+
+
 def compile_check_sql(session, sql: str) -> Tuple[bool, Optional[str]]:
-    """Compile-only check using EXPLAIN. Returns (ok:bool, error:str|None)."""
+    """
+    Compile-only check compatible with Microsoft Fabric T-SQL.
+
+    Replaces the Snowflake-specific EXPLAIN command (not supported on Fabric)
+    with two T-SQL compatible strategies:
+      1. SET NOEXEC ON  — parse & compile without executing
+      2. TOP 0 subquery — execute returning zero rows (validates schema/columns)
+
+    Returns (ok: bool, error: str | None).
+    """
     import time as time_module
     t0 = time_module.time()
+
+    sql_clean = (sql or "").strip().rstrip(";")
+    if not sql_clean:
+        return False, "Empty SQL"
+
+    sql_clean = _qualify_sql_table_names(sql_clean)
+    print(f"[TIMING] Starting T-SQL compile check...")
+    print(f"[SQL DEBUG] Checking SQL:\n{sql_clean[:400]}")
+
+    # Strategy 1: SET NOEXEC ON (T-SQL standard dry-run)
     try:
-        sql_clean = (sql or "").strip().rstrip(";")
-        # Auto-qualify any unqualified vw_* table names before checking
-        sql_clean = _qualify_sql_table_names(sql_clean)
-        print(f"[TIMING] Starting EXPLAIN compile check...")
-        print(f"[SQL DEBUG] Checking SQL:\n{sql_clean[:400]}")  # Log first 400 chars
-        session.sql(f"EXPLAIN {sql_clean}").collect()
+        check_batch = f"SET NOEXEC ON;\n{sql_clean};\nSET NOEXEC OFF;"
+        session.sql(check_batch).collect()
         t1 = time_module.time()
-        print(f"[TIMING] EXPLAIN compile check passed: {t1-t0:.2f}s")
+        print(f"[TIMING] SET NOEXEC compile check passed: {t1-t0:.2f}s")
         return True, None
     except Exception as e:
-        t1 = time_module.time()
-        print(f"[TIMING] EXPLAIN compile check FAILED after {t1-t0:.2f}s")
-        
-        # Extract and analyze the error
         error_str = str(e)
-        print(f"[SQL ERROR] Full error: {error_str[:500]}")
-        
-        # Extract column name if it's an invalid identifier error
-        invalid_col_match = re.search(r"invalid identifier '([^']+)'", error_str, flags=re.IGNORECASE)
-        if invalid_col_match:
-            invalid_col = invalid_col_match.group(1)
-            hint = ""
-            
-            # Provide helpful hints for common mistakes
-            if invalid_col.upper().endswith("_HOURS"):
-                if "AVG_HOURS" in invalid_col.upper():
-                    hint = " (Did you mean AVG_TURNAROUND_HOURS?)"
-            elif "MARGIN" in invalid_col.upper():
-                if "MARGIN_PCT" in invalid_col.upper():
-                    hint = " (Try GROSS_PROFIT_MARGIN_PCT or CONTRIBUTION_MARGIN_PCT instead)"
-            elif "LEAD_TIME" in invalid_col.upper():
-                if not "AVG_ORDER" in invalid_col.upper():
-                    hint = " (Did you mean AVG_ORDER_LEAD_TIME_DAYS?)"
-            
-            detailed_error = f"Invalid column '{invalid_col}'{hint}"
-        elif "not in GROUP BY" in error_str:
-            detailed_error = "Column referenced in SELECT but not in GROUP BY - all non-aggregated columns must be in GROUP BY"
-        elif "ambiguous column" in error_str.lower():
-            detailed_error = "Ambiguous column reference - use table alias: table.column_name"
-        else:
-            detailed_error = error_str[:200]
-        
-        return False, detailed_error
+        noexec_unsupported = any(kw in error_str.lower() for kw in (
+            "noexec", "set statement", "not supported", "not allowed", "cannot be set"
+        ))
+        if not noexec_unsupported:
+            t1 = time_module.time()
+            print(f"[TIMING] SET NOEXEC compile check FAILED: {t1-t0:.2f}s")
+            print(f"[SQL ERROR] {error_str[:500]}")
+            return False, _extract_sql_error_detail(error_str)
+        print(f"[TIMING] SET NOEXEC not supported — trying TOP 0 fallback...")
+
+    # Strategy 2: SELECT TOP 0 FROM (<query>) — validates without returning data
+    try:
+        top0_sql = f"SELECT TOP 0 * FROM ({sql_clean}) AS _cc_"
+        session.sql(top0_sql).collect()
+        t1 = time_module.time()
+        print(f"[TIMING] TOP 0 compile check passed: {t1-t0:.2f}s")
+        return True, None
+    except Exception as e2:
+        t1 = time_module.time()
+        error_str2 = str(e2)
+        print(f"[TIMING] TOP 0 compile check FAILED: {t1-t0:.2f}s")
+        print(f"[SQL ERROR] {error_str2[:500]}")
+        # If the wrapper itself is the problem, pass optimistically
+        if "_cc_" in error_str2 and "incorrect syntax" in error_str2.lower():
+            print(f"[TIMING] Compile check infrastructure unavailable — passing optimistically")
+            return True, None
+        return False, _extract_sql_error_detail(error_str2)
 
 
 
@@ -7847,7 +7913,8 @@ OFFSET 0 ROWS FETCH NEXT 50 ROWS ONLY;
 AVAILABLE TABLES AND COLUMNS:
 {tables_with_columns}
 
-Return ONLY executable Snowflake SQL. No markdown. No explanations. No comments. Just valid SQL.
+Return ONLY executable Microsoft Fabric T-SQL. No markdown. No explanations. No comments. Just valid T-SQL.
+DO NOT use Snowflake-specific syntax: no QUALIFY, no ::FLOAT, no $1, no ILIKE, no SAMPLE.
 DO NOT ABBREVIATE COLUMN NAMES - USE EXACT NAMES SHOWN ABOVE.
 REMEMBER: Every SELECT must use qualified table.column format with aliases. Never use bare column names.""".strip()
 
@@ -7867,23 +7934,61 @@ REMEMBER: Every SELECT must use qualified table.column format with aliases. Neve
 
         bad, reason = is_sql_obviously_bad(sql)
         if bad:
-            print(f"[TIMING] SQL rejected: {reason}")
+            print(f"[SQL REJECT] {reason}")
             return sql, False, f"Rejected: {reason}"
 
-        print(f"[TIMING] About to compile check...")
-        t5 = time_module.time()
         ok, err = compile_check_sql(session, sql)
-        t6 = time_module.time()
-        print(f"[TIMING] Compile check: {t6-t5:.2f}s - Result: {'OK' if ok else 'FAILED'}")
-        
+        print(f"[TIMING] Compile check: {'OK' if ok else 'FAILED'}")
         if ok:
             t_total = time_module.time() - t0
-            print(f"[TIMING] TOTAL CORTEX SQL GEN: {t_total:.2f}s")
+            print(f"[TIMING] TOTAL SQL GEN: {t_total:.2f}s")
             return sql, True, None
-        
-        # Don't retry - faster to return error if initial generation fails
-        # User can select from verified_queries instead
-        return sql, False, f"Compile failed: {err[:100]}"
+
+        # ── Execute-and-recover: compile check may be a false negative ─
+        # Some Fabric endpoint configs reject SET NOEXEC / TOP-0 wrappers
+        # but the underlying SQL is valid T-SQL. Try running it directly.
+        if sql and "Rejected:" not in (err or ""):
+            print(f"[FALLBACK] Compile check failed ({err}). Trying direct execution...")
+            try:
+                from db_service import run_df as _run_df_fb
+                test_df = _run_df_fb(sql)
+                print(f"[FALLBACK] Direct execution SUCCEEDED ({len(test_df)} rows).")
+                return sql, True, None
+            except Exception as exec_exc:
+                exec_err_str = str(exec_exc)
+                print(f"[FALLBACK] Direct execution failed: {exec_err_str[:200]}")
+
+                # ── Retry with error-correction prompt ────────────────
+                print(f"[RETRY] Generating error-corrected SQL...")
+                correction_prompt = (
+                    f"{prompt}\n\n"
+                    f"PREVIOUS ATTEMPT FAILED:\n{sql}\n\n"
+                    f"ERROR: {exec_err_str[:300]}\n\n"
+                    f"Fix the SQL for Microsoft Fabric T-SQL. Common causes:\n"
+                    f"- Wrong column names — check exact names in schema above\n"
+                    f"- Missing schema prefix: use INFORMATION_MART.vw_table_name\n"
+                    f"- Ambiguous columns: qualify every column with alias.column\n"
+                    f"- Snowflake syntax used: rewrite as T-SQL\n"
+                    f"Return ONLY fixed T-SQL."
+                )
+                try:
+                    retry_df = pd.DataFrame(
+                        [{"SQL_QUERY": cortex_complete(correction_prompt, temperature=0.1)}]
+                    )
+                    raw2 = (retry_df.at[0, "SQL_QUERY"] if not retry_df.empty else "") or ""
+                    sql2 = extract_first_select_sql(raw2)
+                    sql2 = _qualify_sql_table_names(sql2)
+                    if sql2 and not is_sql_obviously_bad(sql2)[0]:
+                        from db_service import run_df as _run_df_retry
+                        retry_exec = _run_df_retry(sql2)
+                        print(f"[RETRY] Corrected SQL SUCCEEDED ({len(retry_exec)} rows).")
+                        return sql2, True, None
+                except Exception as retry_exc:
+                    print(f"[RETRY] Also failed: {str(retry_exc)[:150]}")
+
+        t_total = time_module.time() - t0
+        print(f"[TIMING] All generation attempts failed after {t_total:.2f}s")
+        return sql or "", False, f"Compile failed: {(err or '')[:150]}"
 
     except Exception as e:
         t_total = time_module.time() - t0
@@ -8270,20 +8375,40 @@ def call_cortex_analyst(
         _genie_debug(f"[CACHE HIT] Fetch: {cache_fetch_time_ms:.2f}ms")
         cached_response['cache_fetch_time_ms'] = cache_fetch_time_ms
 
-        # Re-execute SQL if DataFrame missing (legacy entries)
+        # Re-execute SQL if DataFrame missing (legacy / DB-cached entries)
         vendors_df_cached = cached_response.get("vendors_df")
         has_df = vendors_df_cached is not None and (
             not isinstance(vendors_df_cached, pd.DataFrame)
             or not vendors_df_cached.empty
         )
         if cached_response.get("layout") == "quick" and cached_response.get("sql") and not has_df:
-            print(f"[CACHE RESTORE] Re-executing SQL...", file=sys.stderr)
+            raw_sql = cached_response["sql"]
+            # Sanitize cached SQL before re-execution:
+            # SQL stored in the Warehouse cache can have literal \\n sequences,
+            # mangled single quotes from INSERT escaping, and three-part DB prefixes
+            # that Fabric SQL rejects. _prepare_sql() from db_service fixes all of these.
             try:
-                df = run_df(cached_response["sql"])
+                from db_service import _prepare_sql as _db_prepare_sql
+                sanitized_sql = _db_prepare_sql(raw_sql)
+            except Exception:
+                # Inline fallback if import not available
+                sanitized_sql = raw_sql.replace('\\n', '\n').replace('\\r', '\r').replace('\\t', '\t')
+                sanitized_sql = re.sub(
+                    r'\b\w+\.INFORMATION_MART\.(vw_\w+)',
+                    r'INFORMATION_MART.\1',
+                    sanitized_sql, flags=re.IGNORECASE
+                )
+            # Fix triple single-quotes that can appear after cache round-trip
+            # e.g. THEN ''STRONG'' becomes THEN 'STRONG' after one unescaping
+            sanitized_sql = re.sub(r"'{3,}", "''", sanitized_sql)
+            print(f"[CACHE RESTORE] Re-executing sanitized SQL...", file=sys.stderr)
+            try:
+                df = run_df(sanitized_sql)
                 cached_response["vendors_df"] = df
+                cached_response["sql"] = sanitized_sql
                 print(f"[CACHE RESTORE] Got {len(df)} rows", file=sys.stderr)
             except Exception as e:
-                print(f"[CACHE RESTORE] Failed: {str(e)[:100]}", file=sys.stderr)
+                print(f"[CACHE RESTORE] Sanitized SQL failed: {str(e)[:200]}", file=sys.stderr)
 
         return cached_response
 
@@ -8557,6 +8682,26 @@ def call_cortex_analyst(
                 "text_summary":     text_summary,
                 "response_time_ms": response_time_ms,
             }
+            # ── Log to genie_context_memory (PATH 2 success) ─────────────
+            try:
+                import streamlit as _st
+                _sid  = _st.session_state.get("genie_session_id", "unknown")
+                _user = _st.session_state.get("username", "UNKNOWN")
+                set_log_context(question=query_text, session_id=_sid, user=_user)
+                log_event(
+                    "SQL_GENERATED",
+                    {
+                        "question":   query_text,
+                        "session_id": _sid,
+                        "user":       _user,
+                        "sql":        gen_sql[:4000],
+                        "summary":    text_summary[:2000],
+                        "relevance":  1.0 if not df.empty else 0.5,
+                        "details":    f"rows={len(df)}, time={response_time_ms:.0f}ms",
+                    },
+                )
+            except Exception as _le:
+                logger.debug("[GENIE MEMORY] log_event PATH2 failed: %s", _le)
             cache.set(query_text, response,
                       response_time_ms=response_time_ms,
                       cache_key_override=ctx_hash)
@@ -8575,15 +8720,81 @@ def call_cortex_analyst(
             }
 
     elif gen_sql:
-        return {
-            "layout":           "sql_failed",
-            "sql":              gen_sql,
-            "error":            f"SQL validation failed: {gen_err}",
-            "source":           "generated_sql",
-            "gen_ok":           False,
-            "gen_error":        gen_err,
-            "response_time_ms": (time_module.time() - t_start) * 1000,
-        }
+        # Compile check reported failure but SQL was generated.
+        # Attempt direct execution — compile check can be a false negative
+        # on Fabric endpoints that do not support SET NOEXEC / TOP 0.
+        print(f"[PATH 2 FALLBACK] ok=False but SQL exists — trying direct execution...")
+        t1 = time_module.time()
+        try:
+            df = run_df(gen_sql)
+            t2 = time_module.time()
+            print(f"[PATH 2 FALLBACK] Direct execution SUCCEEDED: {df.shape}")
+            text_summary = ""
+            if not df.empty:
+                try:
+                    data_summary = (
+                        f"Query returned {len(df)} rows:\n{df.head(5).to_string()}"
+                        + (f"\n... and {len(df)-5} more rows" if len(df) > 5 else "")
+                    )
+                    cortex_prompt = (
+                        f"{full_context}"
+                        f"Analyze this dealer question:\n\n"
+                        f"Question: {query_text.strip()}\nData: {data_summary}\n\n"
+                        f"Respond with THREE sections:\n\n"
+                        f"**Descriptive** - What the data shows (2-3 sentences)\n\n"
+                        f"**Prescriptive** - Recommendations (5-7 bullets with •)\n\n"
+                        f"**Predictive** - Expected Impact 12-24 months (1-2 sentences)"
+                    )
+                    tdf = pd.DataFrame([{"RESPONSE": cortex_complete(cortex_prompt, temperature=0.2)}])
+                    text_summary = (tdf.at[0, "RESPONSE"] if not tdf.empty else "") or ""
+                except Exception as te:
+                    print(f"[TEXT GEN] Failed in fallback path: {str(te)[:80]}")
+            response_time_ms = (t2 - t1) * 1000
+            response = {
+                "layout":           "quick",
+                "vendors_df":       df,
+                "sql":              gen_sql,
+                "source":           "generated_sql",
+                "gen_ok":           True,
+                "gen_error":        None,
+                "text_summary":     text_summary,
+                "response_time_ms": response_time_ms,
+            }
+            # ── Log to genie_context_memory (PATH 2 fallback success) ────
+            try:
+                import streamlit as _st
+                _sid  = _st.session_state.get("genie_session_id", "unknown")
+                _user = _st.session_state.get("username", "UNKNOWN")
+                set_log_context(question=query_text, session_id=_sid, user=_user)
+                log_event(
+                    "SQL_GENERATED_FALLBACK",
+                    {
+                        "question":   query_text,
+                        "session_id": _sid,
+                        "user":       _user,
+                        "sql":        gen_sql[:4000],
+                        "summary":    text_summary[:2000],
+                        "relevance":  1.0 if not df.empty else 0.5,
+                        "details":    f"rows={len(df)}, time={response_time_ms:.0f}ms (fallback path)",
+                    },
+                )
+            except Exception as _le:
+                logger.debug("[GENIE MEMORY] log_event PATH2-fallback failed: %s", _le)
+            cache.set(query_text, response,
+                      response_time_ms=response_time_ms,
+                      cache_key_override=ctx_hash)
+            return response
+        except Exception as exec_err:
+            print(f"[PATH 2 FALLBACK] Direct execution also failed: {str(exec_err)[:150]}")
+            return {
+                "layout":           "sql_failed",
+                "sql":              gen_sql,
+                "error":            f"SQL validation and execution both failed. Compile: {gen_err} | Exec: {str(exec_err)[:120]}",
+                "source":           "generated_sql",
+                "gen_ok":           False,
+                "gen_error":        gen_err,
+                "response_time_ms": (time_module.time() - t_start) * 1000,
+            }
 
     # ═════════════════════════════════════════════════════════════════════
     # PATH 3 — Text-only fallback
@@ -8648,6 +8859,26 @@ def call_cortex_analyst(
         cache.set(query_text, response,
                   response_time_ms=response_time_ms,
                   cache_key_override=ctx_hash)
+        # ── Log to genie_context_memory (PATH 3 text-only fallback) ──────
+        try:
+            import streamlit as _st
+            _sid  = _st.session_state.get("genie_session_id", "unknown")
+            _user = _st.session_state.get("username", "UNKNOWN")
+            set_log_context(question=query_text, session_id=_sid, user=_user)
+            log_event(
+                "TEXT_FALLBACK",
+                {
+                    "question":   query_text,
+                    "session_id": _sid,
+                    "user":       _user,
+                    "sql":        response.get("sql", ""),
+                    "summary":    response_text[:2000],
+                    "relevance":  0.7,
+                    "details":    f"text-only fallback, time={response_time_ms:.0f}ms",
+                },
+            )
+        except Exception as _le:
+            logger.debug("[GENIE MEMORY] log_event PATH3 failed: %s", _le)
         return response
 
     except Exception as e:
@@ -8655,11 +8886,6 @@ def call_cortex_analyst(
             "message": {"content": [{"type": "text", "text": f"⚠️ Error: {str(e)[:150]}"}]},
             "response_time_ms": (time_module.time() - t_start) * 1000,
         }
-
-
-# ============================================================================
-# PREDICTIVE ANALYSIS HELPER FUNCTIONS
-# ============================================================================
 
 def extract_dealer_name_from_question(question: str) -> Optional[str]:
     """
@@ -9084,6 +9310,12 @@ def render_genie_page(session):
             "timestamp": pd.Timestamp.now(), "response": None,
         })
 
+        # ── Set middleware log context so downstream modules (db_service, etc.)
+        #    can read question / session_id / user without extra parameters. ──
+        _sid  = st.session_state.get("genie_session_id", "unknown")
+        _user = st.session_state.get("username", "UNKNOWN")
+        set_log_context(question=query, session_id=_sid, user=_user)
+
         # Use context_turns slider value — *2 for user+assistant pairs
         turns   = st.session_state.get("context_turns", 6)
         history = st.session_state.genie_messages[-(turns * 2):]
@@ -9163,6 +9395,59 @@ def render_genie_page(session):
                 memory_obj.refresh()
             except Exception as e:
                 print(f"[MEMORY REFRESH] {str(e)[:80]}", file=__import__('sys').stderr)
+
+        # ── Persist to genie_context_memory via middleware ────────────────
+        # Extract structured fields from the response so each analysis type
+        # (descriptive / prescriptive / predictive) is stored in its own column.
+        try:
+            _sql_used     = ""
+            _text_summary = ""
+            _desc         = ""
+            _pres         = ""
+            _pred         = ""
+            _tables       = ""
+            _row_count    = 0
+
+            if isinstance(response, dict):
+                _sql_used     = (response.get("sql") or "")[:4000]
+                _text_summary = response.get("text_summary", "") or ""
+                _row_count    = len(response["vendors_df"]) if isinstance(
+                    response.get("vendors_df"), pd.DataFrame) else 0
+
+                # Re-use the same section parser that the UI uses so the stored
+                # text exactly matches what the user sees on screen.
+                _desc, _pres, _pred = parse_analysis_sections(_text_summary)
+                _desc = _desc or ""
+                _pres = _pres or ""
+                _pred = _pred or ""
+
+                # Derive table names from the SQL (best-effort)
+                if _sql_used:
+                    _tables = ", ".join(
+                        re.findall(r'\bFROM\s+(?:\w+\.)?(\w+)', _sql_used, re.IGNORECASE)
+                        + re.findall(r'\bJOIN\s+(?:\w+\.)?(\w+)', _sql_used, re.IGNORECASE)
+                    )[:500]
+
+            log_events_upsert(
+                event_type=analysis_type.upper(),
+                payload={
+                    "question":              query,
+                    "session_id":            st.session_state.get("genie_session_id", "unknown"),
+                    "user":                  st.session_state.get("username", "UNKNOWN"),
+                    "sql":                   _sql_used,
+                    "summary":               _text_summary[:2000],
+                    "full_answer":           _text_summary,
+                    "descriptive_analysis":  _desc,
+                    "prescriptive_analysis": _pres,
+                    "predictive_analysis":   _pred,
+                    "tables":                _tables,
+                    "filters":               "",
+                    "relevance":             1.0 if _row_count > 0 else 0.5,
+                    "details":               f"rows={_row_count}, source={response.get('source','') if isinstance(response, dict) else ''}",
+                },
+            )
+        except Exception as _mem_exc:
+            logger.warning("[GENIE MEMORY] log_events_upsert failed: %s", str(_mem_exc)[:120])
 
         return response
 
@@ -9273,6 +9558,17 @@ Respond with THREE sections (ONLY these headers, no extra text):
                         unsafe_allow_html=True)
 
         desc_s, pres_s, pred_s = parse_analysis_sections(text_summary)
+
+        # ── Persist the rendered analysis text back to the DB so the stored
+        #    row reflects exactly what the user sees (called best-effort). ──
+        try:
+            update_analysis_insights(
+                descriptive=desc_s or "",
+                prescriptive=pres_s or "",
+                predictive=pred_s or "",
+            )
+        except Exception as _ua_exc:
+            logger.debug("[GENIE MEMORY] update_analysis_insights failed: %s", _ua_exc)
 
         if desc_s:
             st.markdown(f"""

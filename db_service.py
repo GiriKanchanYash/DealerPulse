@@ -9,12 +9,11 @@ Enhancements over the original:
   - Data-Vault-aware helpers (req 5).
   - No emojis in log messages (req 1).
   - Warehouse read/write separated from Lakehouse reads (req 11).
-  - Retry logic added for stale connection recovery (Azure Web App).
 """
 
 from __future__ import annotations
 import hashlib
-import json
+# import json
 import logging
 from typing import Optional
 import time
@@ -22,26 +21,15 @@ import pandas as pd
 import pyodbc
 
 from config import Config
-from fabric_sql import normalize_sql
 
 logger = logging.getLogger(__name__)
-
-
-def _prepare_sql(sql: str) -> str:
-    """Normalize SQL for Microsoft Fabric T-SQL before execution."""
-    return normalize_sql(sql)
-
-# ---------------------------------------------------------------------------
-# CHANGE 1: Added MAX_RETRIES and RETRY_DELAY constants (after imports)
-# ---------------------------------------------------------------------------
-MAX_RETRIES = 2       # Number of retry attempts on connection failure
-RETRY_DELAY = 1       # Seconds to wait between retries
 
 
 def _safe_log_event(event_type: str, payload: dict) -> None:
     """Avoid circular imports by importing Genie logging lazily."""
     try:
         from genie_middleware import log_event
+
         log_event(event_type, payload)
     except Exception:
         pass
@@ -94,54 +82,24 @@ class FabricSession:
 
 
 class FabricDataFrame:
-    """Thin SnowparkDataFrame shim around a SQL query string."""
+    """Thin DataFrame shim around a SQL query string."""
 
     def __init__(self, query: str, session: FabricSession):
-        self._query = _prepare_sql(query)
+        self._query = query
         self._session = session
 
-    # ---------------------------------------------------------------------------
-    # CHANGE 2: Added retry logic in collect() method
-    # Original: no retry, single attempt
-    # ---------------------------------------------------------------------------
     def collect(self) -> list:
-        last_exc = None
-        for attempt in range(MAX_RETRIES):
-            try:
-                conn = self._session.get_connection()
-                cursor = conn.cursor()
-                try:
-                    cursor.execute(self._query)
-                    return cursor.fetchall()
-                finally:
-                    cursor.close()
-            except Exception as exc:
-                last_exc = exc
-                logger.warning("collect() attempt %d failed: %s", attempt + 1, exc)
-                # Force fresh connection on next attempt
-                self._session._connection = None
-                if attempt < MAX_RETRIES - 1:
-                    time.sleep(RETRY_DELAY)
-        raise last_exc
+        conn = self._session.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(self._query)
+            return cursor.fetchall()
+        finally:
+            cursor.close()
 
-    # ---------------------------------------------------------------------------
-    # CHANGE 3: Added retry logic in to_pandas() method
-    # Original: no retry, single attempt
-    # ---------------------------------------------------------------------------
     def to_pandas(self) -> pd.DataFrame:
-        last_exc = None
-        for attempt in range(MAX_RETRIES):
-            try:
-                conn = self._session.get_connection()
-                return pd.read_sql(self._query, conn)
-            except Exception as exc:
-                last_exc = exc
-                logger.warning("to_pandas() attempt %d failed: %s", attempt + 1, exc)
-                # Force fresh connection on next attempt
-                self._session._connection = None
-                if attempt < MAX_RETRIES - 1:
-                    time.sleep(RETRY_DELAY)
-        raise last_exc
+        conn = self._session.get_connection()
+        return pd.read_sql(self._query, conn)
 
 
 # ---------------------------------------------------------------------------
@@ -156,20 +114,17 @@ def get_active_session() -> FabricSession:
     """Return the module-level Lakehouse session (read-only analytics)."""
     global _lakehouse_session
     if _lakehouse_session is None:
-        _lakehouse_session = FabricSession()
+        _lakehouse_session = FabricSession(Config.get_connection_string())
     return _lakehouse_session
 
 
-def get_fabric_session() -> FabricSession:
-    """Preferred alias for the Lakehouse Fabric SQL session."""
-    return get_active_session()
-
-
 def _get_warehouse_session() -> FabricSession:
-    """Return the module-level Warehouse session (read + write)."""
+    """ Return the module-level Warehouse session (read + write)."""
+
     global _warehouse_session
     if _warehouse_session is None:
-        _warehouse_session = FabricSession(Config.get_warehouse_connection_string())
+        _warehouse_session = FabricSession(
+            Config.get_warehouse_connection_string())
     return _warehouse_session
 
 
@@ -177,74 +132,36 @@ def _get_warehouse_session() -> FabricSession:
 # Public query helpers - Lakehouse
 # ---------------------------------------------------------------------------
 
-# ---------------------------------------------------------------------------
-# CHANGE 4: Added retry logic in run_df()
-# Original: single attempt, raised RuntimeError directly
-# ---------------------------------------------------------------------------
+
 def run_df(sql: str) -> pd.DataFrame:
     """Execute SQL against the Lakehouse and return a DataFrame."""
-    sql = _prepare_sql(sql)
-    last_exc = None
-    for attempt in range(MAX_RETRIES):
-        try:
-            return get_active_session().sql(sql).to_pandas()
-        except Exception as exc:
-            last_exc = exc
-            logger.warning("run_df() attempt %d failed: %s", attempt + 1, exc)
-            # Reset session to force fresh connection
-            global _lakehouse_session
-            _lakehouse_session = None
-            if attempt < MAX_RETRIES - 1:
-                time.sleep(RETRY_DELAY)
-    raise RuntimeError(f"Lakehouse query failed after {MAX_RETRIES} attempts: {last_exc}") from last_exc
+    try:
+        return get_active_session().sql(sql).to_pandas()
+    except Exception as exc:
+        raise RuntimeError(f"Lakehouse query failed: {exc}") from exc
 
 
-# ---------------------------------------------------------------------------
-# CHANGE 5: Added retry logic in execute_query()
-# Original: single attempt, raised RuntimeError directly
-# ---------------------------------------------------------------------------
 def execute_query(sql: str, params: Optional[list] = None) -> pd.DataFrame:
     """Parameterised Lakehouse SELECT."""
-    sql = _prepare_sql(sql)
-    last_exc = None
-    for attempt in range(MAX_RETRIES):
-        try:
-            conn = get_active_session().get_connection()
-            return pd.read_sql(sql, conn, params=params or [])
-        except Exception as exc:
-            last_exc = exc
-            logger.warning("execute_query() attempt %d failed: %s", attempt + 1, exc)
-            global _lakehouse_session
-            _lakehouse_session = None
-            if attempt < MAX_RETRIES - 1:
-                time.sleep(RETRY_DELAY)
-    raise RuntimeError(f"Lakehouse query failed after {MAX_RETRIES} attempts: {last_exc}") from last_exc
+    try:
+        conn = get_active_session().get_connection()
+        return pd.read_sql(sql, conn, params=params or [])
+    except Exception as exc:
+        raise RuntimeError(f"Lakehouse query failed: {exc}") from exc
 
 
-# ---------------------------------------------------------------------------
-# CHANGE 6: Added retry logic in execute_non_query()
-# Original: single attempt, raised RuntimeError directly
-# ---------------------------------------------------------------------------
 def execute_non_query(sql: str, params: Optional[list] = None) -> int:
     """Non-SELECT statement against the Lakehouse (DDL etc.)."""
-    last_exc = None
-    for attempt in range(MAX_RETRIES):
-        try:
-            conn = get_active_session().get_connection()
-            cursor = conn.cursor()
-            cursor.execute(sql, params or [])
-            conn.commit()
-            rows = cursor.rowcount
-            cursor.close()
-            return rows
-        except Exception as exc:
-            last_exc = exc
-            logger.warning("execute_non_query() attempt %d failed: %s", attempt + 1, exc)
-            global _lakehouse_session
-            _lakehouse_session = None
-            if attempt < MAX_RETRIES - 1:
-                time.sleep(RETRY_DELAY)
-    raise RuntimeError(f"Lakehouse non-query failed after {MAX_RETRIES} attempts: {last_exc}") from last_exc
+    try:
+        conn = get_active_session().get_connection()
+        cursor = conn.cursor()
+        cursor.execute(sql, params or [])
+        conn.commit()
+        rows = cursor.rowcount
+        cursor.close()
+        return rows
+    except Exception as exc:
+        raise RuntimeError(f"Lakehouse non-query failed: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -255,73 +172,60 @@ def get_warehouse_connection() -> pyodbc.Connection:
     return _get_warehouse_session().get_connection()
 
 
-# ---------------------------------------------------------------------------
-# CHANGE 7: Added retry logic in run_warehouse_df()
-# Original: single attempt, raised RuntimeError directly
-# ---------------------------------------------------------------------------
 def run_warehouse_df(sql: str) -> pd.DataFrame:
     """SELECT from the Warehouse."""
-    sql = _prepare_sql(sql)
-    last_exc = None
-    for attempt in range(MAX_RETRIES):
-        try:
-            conn = _get_warehouse_session().get_connection()
-            return pd.read_sql(sql, conn)
-        except Exception as exc:
-            last_exc = exc
-            logger.warning("run_warehouse_df() attempt %d failed: %s", attempt + 1, exc)
-            # Reset warehouse session to force fresh connection
-            global _warehouse_session
-            _warehouse_session = None
-            if attempt < MAX_RETRIES - 1:
-                time.sleep(RETRY_DELAY)
-    raise RuntimeError(f"Warehouse read failed after {MAX_RETRIES} attempts: {last_exc}") from last_exc
+
+    try:
+        conn = _get_warehouse_session().get_connection()
+        return pd.read_sql(sql, conn)
+    except Exception as exc:
+        raise RuntimeError(f"Warehouse read failed: {exc}") from exc
 
 
-# ---------------------------------------------------------------------------
-# CHANGE 8: Added retry logic in run_warehouse_non_query()
-# Original: single attempt, raised RuntimeError directly
-# ---------------------------------------------------------------------------
 def run_warehouse_non_query(sql: str, params: Optional[list] = None) -> int:
     """INSERT / UPDATE / DELETE against the Warehouse."""
-    last_exc = None
-    for attempt in range(MAX_RETRIES):
-        try:
-            conn = _get_warehouse_session().get_connection()
-            cursor = conn.cursor()
-            if params:
-                cursor.execute(sql, params)
-            else:
-                cursor.execute(sql)
-            conn.commit()
-            rows = cursor.rowcount
-            cursor.close()
-            return rows
-        except Exception as exc:
-            last_exc = exc
-            logger.warning("run_warehouse_non_query() attempt %d failed: %s", attempt + 1, exc)
-            global _warehouse_session
-            _warehouse_session = None
-            if attempt < MAX_RETRIES - 1:
-                time.sleep(RETRY_DELAY)
-    raise RuntimeError(f"Warehouse write failed after {MAX_RETRIES} attempts: {last_exc}") from last_exc
+
+    try:
+        conn = _get_warehouse_session().get_connection()
+        cursor = conn.cursor()
+        if params:
+            cursor.execute(sql, params)
+        else:
+            cursor.execute(sql)
+        conn.commit()
+        rows = cursor.rowcount
+        cursor.close()
+        return rows
+    except Exception as exc:
+        raise RuntimeError(f"Warehouse write failed: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------
 # Query result cache (req 3, 8)
+#
+# The cache table (dbo.QUERY_RESULT_CACHE) is checked BEFORE every AI call
+# and every heavy analytical query.  If a matching row is found within TTL,
+# the cached JSON payload is returned directly.
 # ---------------------------------------------------------------------------
 
 _CACHE_TABLE = f"[{Config.WAREHOUSE_SCHEMA}].[{Config.CACHE_TABLE_NAME}]"
 
+print(f"Cache enabled: {Config.CACHE_ENABLED}, table: {_CACHE_TABLE}, TTL: {Config.CACHE_TTL_SECONDS} seconds")
 
 def _cache_key(question: str) -> str:
     """Deterministic 64-char hex key for a natural-language question."""
     return hashlib.sha256(question.strip().lower().encode()).hexdigest()
 
-
 def cache_get(question: str) -> Optional[dict]:
     """
     Return cached entry for the given question if it exists and has not expired.
+
+    Returns a dict with keys:
+        - sql
+        - result_json
+        - row_count
+
+    Returns None when there is no valid cache entry.
     """
     if not Config.CACHE_ENABLED:
         return None
@@ -330,66 +234,86 @@ def cache_get(question: str) -> Optional[dict]:
     key = _cache_key(question)
 
     try:
-        df = run_warehouse_df(f"""
-            SELECT GENERATED_SQL, RESULT_JSON, ROW_COUNT
+        df = run_warehouse_df(
+            f"""
+            SELECT GENERATED_SQL,
+                   RESULT_JSON,
+                   ROW_COUNT
             FROM   {_CACHE_TABLE}
             WHERE  CACHE_KEY = '{key}'
-              AND  EXPIRES_AT > CONVERT(VARCHAR(30), GETDATE(), 120)
-        """)
+              AND  EXPIRES_AT > FORMAT(GETDATE(), 'yyyy-MM-dd HH:mm:ss')
+            """
+        )
 
         if df.empty:
-            _safe_log_event("CACHE_MISS", {
-                "summary": "Cache miss",
-                "cache_key": key,
-                "relevance": 0.2
-            })
+            # 🔹 Log cache miss
+            _safe_log_event(
+                "CACHE_MISS",
+                {
+                    "summary": "Cache miss",
+                    "cache_key": key,
+                    "relevance": 0.2,
+                },
+            )
             return None
 
+        # Increment hit counter (best-effort)
         try:
-            run_warehouse_non_query(f"""
+            run_warehouse_non_query(
+                f"""
                 UPDATE {_CACHE_TABLE}
                 SET    HIT_COUNT = HIT_COUNT + 1
                 WHERE  CACHE_KEY = '{key}'
-            """)
+                """
+            )
         except Exception:
             pass
 
         row = df.iloc[0]
 
+        # Fabric Warehouse returns column names in uppercase
         def _get(r, *names):
-            for n in names:
-                v = r.get(n)
-                if v is not None:
-                    return v
+            for name in names:
+                value = r.get(name)
+                if value is not None:
+                    return value
             return None
 
         result = {
-            "sql":         _get(row, "GENERATED_SQL", "generated_sql") or "",
-            "result_json": _get(row, "RESULT_JSON",   "result_json")   or "[]",
-            "row_count":   int(_get(row, "ROW_COUNT", "row_count") or 0),
+            "sql": _get(row, "GENERATED_SQL", "generated_sql") or "",
+            "result_json": _get(row, "RESULT_JSON", "result_json") or "[]",
+            "row_count": int(_get(row, "ROW_COUNT", "row_count") or 0),
         }
 
         duration = round(time.time() - start_time, 3)
 
-        _safe_log_event("CACHE_HIT", {
-            "summary": f"{result['row_count']} rows (cache) in {duration}s",
-            "sql": result["sql"],
-            "cache_key": key,
-            "relevance": 1.0,
-            "details": f"Cache retrieval time: {duration}s"
-        })
+        # 🔹 Log cache hit
+        _safe_log_event(
+            "CACHE_HIT",
+            {
+                "summary": f"{result['row_count']} rows (cache) in {duration}s",
+                "sql": result["sql"],
+                "cache_key": key,
+                "relevance": 1.0,
+                "details": f"Cache retrieval time: {duration}s",
+            },
+        )
 
         return result
 
     except Exception as exc:
         duration = round(time.time() - start_time, 3)
 
-        _safe_log_event("CACHE_ERROR", {
-            "summary": "Cache lookup failed",
-            "details": f"{str(exc)} | Time: {duration}s",
-            "cache_key": key,
-            "relevance": 0.0
-        })
+        # 🔹 Log cache error
+        _safe_log_event(
+            "CACHE_ERROR",
+            {
+                "summary": "Cache lookup failed",
+                "details": f"{str(exc)} | Time: {duration}s",
+                "cache_key": key,
+                "relevance": 0.0,
+            },
+        )
 
         logger.debug("Cache lookup failed: %s", exc)
         return None
@@ -407,10 +331,10 @@ def cache_set(question: str, sql: str, result_df: pd.DataFrame) -> None:
         logger.debug("Result too large to cache (%d rows)", len(result_df))
         return
 
-    key       = _cache_key(question)
-    q_esc     = question.replace("'", "''")[:2000]
-    sql_esc   = sql.replace("'", "''")
-    ttl       = Config.CACHE_TTL_SECONDS
+    key = _cache_key(question)
+    q_esc = question.replace("'", "''")[:2000]
+    sql_esc = sql.replace("'", "''")
+    ttl = Config.CACHE_TTL_SECONDS
 
     try:
         result_json = result_df.to_json(orient="records", date_format="iso")
@@ -420,18 +344,22 @@ def cache_set(question: str, sql: str, result_df: pd.DataFrame) -> None:
 
     nrows = len(result_df)
     try:
+        # Try UPDATE first
         rows_updated = run_warehouse_non_query(f"""
             UPDATE {_CACHE_TABLE}
             SET    GENERATED_SQL = '{sql_esc}',
                    RESULT_JSON   = '{result_json}',
                    ROW_COUNT     = {nrows},
-                   CREATED_AT    = CONVERT(VARCHAR(30), GETDATE(), 120),
-                   EXPIRES_AT    = CONVERT(VARCHAR(30), DATEADD(SECOND, {ttl}, GETDATE()), 120),
+                   CREATED_AT    =  FORMAT(GETDATE(), 'yyyy-MM-dd HH:mm:ss'),
+                   EXPIRES_AT    = FORMAT(
+                       DATEADD(SECOND, {ttl}, GETDATE()), 'yyyy-MM-dd HH:mm:ss'),
                    QUESTION_TEXT = '{q_esc}',
                    HIT_COUNT     = 0
             WHERE  CACHE_KEY = '{key}'
         """)
         if rows_updated == 0:
+            # No existing row - INSERT with all values explicit (no DEFAULT)
+            # run_warehouse_non_query(f"""
             run_warehouse_non_query(f"""
                 INSERT INTO {_CACHE_TABLE}
                     (CACHE_KEY, QUESTION_HASH, QUESTION_TEXT, GENERATED_SQL,
@@ -439,8 +367,9 @@ def cache_set(question: str, sql: str, result_df: pd.DataFrame) -> None:
                 VALUES (
                     '{key}', '{key}', '{q_esc}', '{sql_esc}',
                     '{result_json}', {nrows},
-                    CONVERT(VARCHAR(30), GETDATE(), 120),
-                    CONVERT(VARCHAR(30), DATEADD(SECOND, {ttl}, GETDATE()), 120),
+                    FORMAT(GETDATE(), 'yyyy-MM-dd HH:mm:ss'),
+                    FORMAT(DATEADD(SECOND, {ttl},
+                           GETDATE()), 'yyyy-MM-dd HH:mm:ss'),
                     0
                 )
             """)
@@ -452,6 +381,7 @@ def cache_invalidate(question: str) -> None:
     """Delete a specific question from the cache."""
     key = _cache_key(question)
     try:
+        # run_warehouse_non_query(
         run_warehouse_non_query(
             f"DELETE FROM {_CACHE_TABLE} WHERE cache_key = '{key}'"
         )
@@ -463,7 +393,8 @@ def cache_purge_expired() -> int:
     """Delete all expired entries; returns number of rows removed."""
     try:
         return run_warehouse_non_query(
-            f"DELETE FROM {_CACHE_TABLE} WHERE EXPIRES_AT <= CONVERT(VARCHAR(30), GETDATE(), 120)"
+
+            f"DELETE FROM {_CACHE_TABLE} WHERE EXPIRES_AT <= FORMAT(GETDATE(), 'yyyy-MM-dd HH:mm:ss')"
         )
     except Exception:
         return 0
@@ -474,6 +405,10 @@ def cache_purge_expired() -> int:
 # ---------------------------------------------------------------------------
 
 def list_tables_in_schema(schema: str = "INFORMATION_MART") -> pd.DataFrame:
+    """
+    Return all base tables and views in the given schema.
+    Used by the AI YAML enrichment pipeline.
+    """
     sql = f"""
         SELECT
             TABLE_NAME,
@@ -486,6 +421,7 @@ def list_tables_in_schema(schema: str = "INFORMATION_MART") -> pd.DataFrame:
 
 
 def get_table_columns(table_name: str, schema: str = "INFORMATION_MART") -> pd.DataFrame:
+    """Return column metadata for a single table."""
     sql = f"""
         SELECT
             COLUMN_NAME,
@@ -501,6 +437,7 @@ def get_table_columns(table_name: str, schema: str = "INFORMATION_MART") -> pd.D
 
 
 def get_primary_keys(table_name: str, schema: str = "INFORMATION_MART") -> list[str]:
+    """Return column names that form the primary key of a table."""
     sql = f"""
         SELECT  kcu.COLUMN_NAME
         FROM    INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
@@ -553,9 +490,12 @@ def test_connection() -> bool:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     print("Testing Lakehouse connection...")
+    # print(Config.get_connection_string())
+    # print(Config.FABRIC_ORDERLENS_DATABASE)
     if test_connection():
         print("Connection successful.")
-        df = run_df("SELECT TOP 5 * FROM INFORMATION_MART.FACT_ALL_SOURCES_VW")
+        df = run_df(
+            "SELECT TOP 5 * FROM INFORMATION_MART.FACT_ORDER_HISTORY_VW")
         print(f"Sample query returned {len(df)} rows.")
     else:
         print("Connection failed. Check configuration.")

@@ -71,6 +71,7 @@ def log_event(event_type: str, payload: dict):
 
         sql = f"""
         INSERT INTO [{WH}].[{Config.GENIE_CONTEXT_MEMORY_TABLE}] (
+            ChatId,
             SessionId,
             Username,
             user_id,
@@ -96,6 +97,7 @@ def log_event(event_type: str, payload: dict):
             UpdatedAt
         )
         VALUES (
+            ABS(CHECKSUM(NEWID())) % 9000000000 + 1000000000,
             '{session_id}',
             '{user_esc}',
             '{user_esc}',
@@ -123,18 +125,6 @@ def log_event(event_type: str, payload: dict):
         """
 
         run_warehouse_non_query(sql)
-
-        update_frequency = f"""
-        UPDATE [{WH}].[{Config.GENIE_CONTEXT_MEMORY_TABLE}]
-        SET
-            Frequency = {new_frequency},
-            Last_Accessed_At = GETDATE(),
-            UpdatedAt = GETDATE()
-        WHERE [Question] = '{question}'
-        AND Username = '{user_esc}';
-        """
-
-        run_warehouse_non_query(update_frequency)
 
     except Exception as e:
         logger.warning(f"[Middleware] Logging failed: {e}")
@@ -264,25 +254,27 @@ def log_events_upsert(event_type: str, payload: dict):
 
         WHEN MATCHED THEN
             UPDATE SET
-                Frequency = target.Frequency + 1,
-                Last_Accessed_At = GETDATE(),
-                UpdatedAt = GETDATE(),
-                AnswerSummary = '{summary}',
-                FullAnswer = '{full}',
+                ChatId               = ISNULL(target.ChatId, ABS(CHECKSUM(NEWID())) % 9000000000 + 1000000000),
+                Frequency            = target.Frequency + 1,
+                Last_Accessed_At     = GETDATE(),
+                UpdatedAt            = GETDATE(),
+                AnswerSummary        = '{summary}',
+                FullAnswer           = '{full}',
                 DescriptiveAnalysis  = '{descriptive}',
                 PrescriptiveAnalysis = '{prescriptive}',
                 PredictiveAnalysis   = '{predictive}',
-                Sql_Query = '{sql_query}',
-                Tables_Used = '{tables}',
-                Filters_Applied = '{filters}',
-                Relevance_Score = {relevance},
-                CacheKey = '{cache_key}',
-                Action_Type = '{event_type}',
-                Action_Details = '{details}',
-                Usage_Count = ISNULL(target.Usage_Count, 0) + 1
+                Sql_Query            = '{sql_query}',
+                Tables_Used          = '{tables}',
+                Filters_Applied      = '{filters}',
+                Relevance_Score      = {relevance},
+                CacheKey             = '{cache_key}',
+                Action_Type          = '{event_type}',
+                Action_Details       = '{details}',
+                Usage_Count          = ISNULL(target.Usage_Count, 0) + 1
 
         WHEN NOT MATCHED THEN
             INSERT (
+                ChatId,
                 SessionId, Username, user_id, Question,
                 AnswerSummary, FullAnswer,
                 DescriptiveAnalysis, PrescriptiveAnalysis, PredictiveAnalysis,
@@ -292,6 +284,7 @@ def log_events_upsert(event_type: str, payload: dict):
                 ChatDate, CreatedAt, UpdatedAt
             )
             VALUES (
+                ABS(CHECKSUM(NEWID())) % 9000000000 + 1000000000,
                 '{session_id}', '{user_esc}', '{user_esc}', '{question_esc}',
                 '{summary}', '{full}',
                 '{descriptive}', '{prescriptive}', '{predictive}',
