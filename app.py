@@ -4223,7 +4223,7 @@ def fetch_dealers(_session):
         WHERE DEALER_NAME IS NOT NULL
         ORDER BY DEALER_NAME
         """
-        result = run_df(query).to_pandas()
+        result = _session.sql(query).to_pandas()
         dealer_list = result['DEALER_NAME'].dropna().tolist() if not result.empty else []
         return dealer_list
     except Exception as e:
