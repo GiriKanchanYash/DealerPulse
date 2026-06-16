@@ -8114,6 +8114,123 @@ Respond with THREE sections (ONLY these headers and content, no extra text):
     except Exception as e:
         return {"layout": "cortex", "error": f"Could not generate quick analysis: {str(e)}"}
 		
+def _azure_openai_generate_context(content: str, content_type: str = "file") -> str:
+    """Use Azure OpenAI to generate a concise context summary from file content
+    or a previous chat transcript.  Returns a plain-text context string that
+    can be prepended to any Cortex prompt.
+
+    Args:
+        content      : Raw text (file content OR chat transcript).
+        content_type : "file" | "chat" — controls the system prompt.
+    Returns:
+        A short context paragraph (≤400 words) ready for injection.
+    """
+    try:
+        from openai import AzureOpenAI as _AzureOpenAI
+        from config import Config as _Cfg
+
+        _client = _AzureOpenAI(
+            azure_endpoint=_Cfg.AZURE_OPENAI_ENDPOINT,
+            api_key=_Cfg.AZURE_OPENAI_API_KEY,
+            api_version=_Cfg.AZURE_OPENAI_API_VERSION,
+        )
+
+        if content_type == "chat":
+            system_msg = (
+                "You are a dealership analytics assistant. "
+                "Summarize the following conversation transcript into a concise context block "
+                "(max 300 words). Preserve: dealer names, KPI values, date ranges, and key findings. "
+                "Format as a single paragraph starting with 'Previous session context:'."
+            )
+            user_msg = f"Conversation transcript:\n{content[:6000]}"
+        else:
+            system_msg = (
+                "You are a dealership analytics assistant. "
+                "Analyze the uploaded document content and extract a concise context summary "
+                "(max 300 words) that will help answer dealer analytics questions. "
+                "Include: key metrics, dealer names, date ranges, and important figures. "
+                "Format as a single paragraph starting with 'Uploaded file context:'."
+            )
+            user_msg = f"Document content:\n{content[:6000]}"
+
+        resp = _client.chat.completions.create(
+            model=_Cfg.AZURE_OPENAI_DEPLOYMENT,
+            messages=[
+                {"role": "system", "content": system_msg},
+                {"role": "user",   "content": user_msg},
+            ],
+            max_tokens=500,
+            temperature=0.2,
+        )
+        return resp.choices[0].message.content.strip()
+    except Exception as e:
+        print(f"[AZURE OPENAI CONTEXT] Failed: {str(e)[:200]}", file=__import__('sys').stderr)
+        return ""
+
+
+def _extract_text_from_uploaded_file(uploaded_file) -> str:
+    """Extract plain text from a Streamlit UploadedFile object.
+    Supports: .txt, .md, .csv, .json, .pdf, .docx, .xlsx
+    Falls back to raw UTF-8 decode for unknown types.
+    """
+    import io
+    name = uploaded_file.name.lower()
+    raw  = uploaded_file.read()
+
+    try:
+        if name.endswith((".txt", ".md", ".log")):
+            return raw.decode("utf-8", errors="replace")
+
+        if name.endswith(".csv"):
+            import csv
+            lines = raw.decode("utf-8", errors="replace").splitlines()
+            return "\n".join(lines[:200])  # first 200 rows
+
+        if name.endswith(".json"):
+            import json as _json
+            obj = _json.loads(raw.decode("utf-8", errors="replace"))
+            return _json.dumps(obj, indent=2)[:6000]
+
+        if name.endswith(".pdf"):
+            try:
+                import pdfplumber
+                with pdfplumber.open(io.BytesIO(raw)) as pdf:
+                    pages = [p.extract_text() or "" for p in pdf.pages[:10]]
+                return "\n".join(pages)
+            except Exception:
+                pass
+            try:
+                from pypdf import PdfReader
+                reader = PdfReader(io.BytesIO(raw))
+                return "\n".join(
+                    p.extract_text() or "" for p in reader.pages[:10]
+                )
+            except Exception:
+                return "[PDF text extraction unavailable]"
+
+        if name.endswith(".docx"):
+            try:
+                import docx as _docx
+                doc = _docx.Document(io.BytesIO(raw))
+                return "\n".join(p.text for p in doc.paragraphs)
+            except Exception:
+                return "[DOCX extraction unavailable]"
+
+        if name.endswith((".xlsx", ".xls")):
+            try:
+                import pandas as _pd
+                df = _pd.read_excel(io.BytesIO(raw), nrows=200)
+                return df.to_csv(index=False)
+            except Exception:
+                return "[Excel extraction unavailable]"
+
+        # Fallback
+        return raw.decode("utf-8", errors="replace")[:6000]
+
+    except Exception as e:
+        return f"[File extraction error: {str(e)[:100]}]"
+
+
 def _genie_debug(msg: str):
     """Append debug messages to session state and stderr."""
     try:
@@ -8326,6 +8443,16 @@ def call_cortex_analyst(
         memory_prefix = memory_obj.get_memory_prefix()
 
     full_context = memory_prefix + context_prefix
+
+    # ── Inject Azure OpenAI resume context (from previous session) ───────────
+    _resume_ctx = st.session_state.get("_resume_context_text", "")
+    if _resume_ctx:
+        full_context = _resume_ctx + "\n\n" + full_context
+
+    # ── Inject uploaded-file context ─────────────────────────────────────────
+    _file_ctx = st.session_state.get("_uploaded_file_context", "")
+    if _file_ctx:
+        full_context = _file_ctx + "\n\n" + full_context
 
     cache = st.session_state.genie_cache
 
@@ -9228,6 +9355,11 @@ def render_genie_page(session):
         "restore_dismissed":        False,  # True if user clicked "Start fresh"
         "_all_sessions_cache":      [],     # list of session dicts from DB
         "show_chats_panel":         False,  # toggle for the chats browser panel
+        # ── file attachment context ───────────────────────────────────────────
+        "_uploaded_file_context":   "",     # Azure OpenAI summary of uploaded file
+        "_uploaded_file_name":      "",     # display name of uploaded file
+        # ── resume session context ────────────────────────────────────────────
+        "_resume_context_text":     "",     # Azure OpenAI summary of resumed session
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -9871,14 +10003,66 @@ Respond with THREE sections (ONLY these headers, no extra text):
                                               "Chat on " + datetime.now().strftime("%b %d %H:%M"))
                 lines = [f"# Genie Chat — {label}", "",
                          f"*Exported {datetime.now().strftime('%Y-%m-%d %H:%M')}*", "", "---", ""]
+                turn = 0
                 for m in msgs:
                     role    = m.get("role", "user")
                     content = m.get("content", "") or ""
                     if not content:
                         continue
-                    prefix = "**You:** " if role == "user" else "**AI Assistant:** "
-                    lines.append(prefix + content)
-                    lines.append("")
+                    if role == "user":
+                        turn += 1
+                        lines.append(f"## Turn {turn}")
+                        lines.append("")
+                        lines.append(f"**Question:** {content}")
+                        lines.append("")
+                    else:
+                        # For assistant messages, also render analysis sections if available
+                        resp = m.get("response")
+                        text_summary = ""
+                        if isinstance(resp, dict):
+                            text_summary = resp.get("text_summary", "") or ""
+                        if text_summary:
+                            import re as _re_md
+                            def _ext_section(text, *markers):
+                                for marker in markers:
+                                    pat = r'\b(?:\d+\.?\s+)?(?:\*{0,2})' + marker + r'(?:\*{0,2})(?:\s*[-:])?'
+                                    m2 = _re_md.search(pat, text, _re_md.IGNORECASE)
+                                    if m2:
+                                        return m2
+                                return None
+                            di = _ext_section(text_summary, "descriptive")
+                            pi = _ext_section(text_summary, "prescriptive")
+                            ri = _ext_section(text_summary, "predictive")
+                            def _slice(sm, *others):
+                                if not sm: return ""
+                                s = sm.end(); e = len(text_summary)
+                                for o in others:
+                                    if o and o.start() > sm.start():
+                                        e = min(e, o.start())
+                                return text_summary[s:e].strip().lstrip("*").strip()
+                            desc = _slice(di, pi, ri)
+                            pres = _slice(pi, ri, di)
+                            pred = _slice(ri, di, pi)
+                            if desc:
+                                lines.append("### Descriptive Analysis")
+                                lines.append(desc)
+                                lines.append("")
+                            if pres:
+                                lines.append("### Prescriptive Analysis")
+                                lines.append(pres)
+                                lines.append("")
+                            if pred:
+                                lines.append("### Predictive Analysis")
+                                lines.append(pred)
+                                lines.append("")
+                            if not (desc or pres or pred):
+                                lines.append(f"**AI Assistant:** {content}")
+                                lines.append("")
+                        else:
+                            lines.append(f"**AI Assistant:** {content}")
+                            lines.append("")
+                        lines.append("---")
+                        lines.append("")
                 return "\n".join(lines)
 
             # 5-column header: title | Chats | Summarize | Download | Clear
@@ -10025,8 +10209,28 @@ Respond with THREE sections (ONLY these headers, no extra text):
                                         use_container_width=True,
                                         type="primary",
                                     ):
-                                        with st.spinner("Loading conversation..."):
+                                        with st.spinner("Loading conversation & building context..."):
                                             msgs = cp_tmp.load_session_messages(sess["session_id"]) if cp_tmp else []
+                                            # ── Generate Azure OpenAI context from old chat ──────
+                                            _resume_context = ""
+                                            if msgs:
+                                                _transcript = "\n".join([
+                                                    f"{'User' if m['role'] == 'user' else 'AI'}: {m.get('content', '')}"
+                                                    for m in msgs if m.get("content")
+                                                ])
+                                                _resume_context = _azure_openai_generate_context(
+                                                    _transcript, content_type="chat"
+                                                )
+                                            # Inject context as a pinned system message at position 0
+                                            if _resume_context:
+                                                msgs = [{
+                                                    "role":      "assistant",
+                                                    "content":   f"📋 **Resumed session context (AI-generated):**\n\n{_resume_context}",
+                                                    "timestamp": pd.Timestamp.now(),
+                                                    "response":  None,
+                                                    "_is_context_msg": True,
+                                                }] + msgs
+                                                st.session_state["_resume_context_text"] = _resume_context
                                         st.session_state.genie_messages      = msgs
                                         st.session_state.chat_turn_index     = len(msgs)
                                         st.session_state.genie_session_id    = sess["session_id"]
@@ -10164,9 +10368,27 @@ Respond with THREE sections (ONLY these headers, no extra text):
                                 use_container_width=True,
                                 type="primary",
                             ):
-                                # Load messages for this specific session
-                                with st.spinner("Loading conversation..."):
+                                with st.spinner("Loading conversation & building context..."):
                                     msgs = cp.load_session_messages(sess["session_id"])
+                                    # ── Generate Azure OpenAI context from old chat ──────
+                                    _resume_context = ""
+                                    if msgs:
+                                        _transcript = "\n".join([
+                                            f"{'User' if m['role'] == 'user' else 'AI'}: {m.get('content', '')}"
+                                            for m in msgs if m.get("content")
+                                        ])
+                                        _resume_context = _azure_openai_generate_context(
+                                            _transcript, content_type="chat"
+                                        )
+                                    if _resume_context:
+                                        msgs = [{
+                                            "role":      "assistant",
+                                            "content":   f"📋 **Resumed session context (AI-generated):**\n\n{_resume_context}",
+                                            "timestamp": pd.Timestamp.now(),
+                                            "response":  None,
+                                            "_is_context_msg": True,
+                                        }] + msgs
+                                        st.session_state["_resume_context_text"] = _resume_context
                                 st.session_state.genie_messages      = msgs
                                 st.session_state.chat_turn_index     = len(msgs)
                                 st.session_state.genie_session_id    = sess["session_id"]
@@ -10256,11 +10478,76 @@ Respond with THREE sections (ONLY these headers, no extra text):
             </script>
             """, unsafe_allow_html=True)
 
-            st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+            st.markdown("&nbsp;", unsafe_allow_html=True)
 
-            # ── Chat input ────────────────────────────────────────────────────────
+            # ── File-context banner (shown when a file has been attached) ─────────
+            _file_ctx_active = bool(st.session_state.get("_uploaded_file_context", ""))
+            if _file_ctx_active:
+                _fname = st.session_state.get("_uploaded_file_name", "file")
+                _fc1, _fc2 = st.columns([5, 1], gap="small")
+                with _fc1:
+                    st.markdown(
+                        f"<div style='background:#eff6ff;border:1px solid #bfdbfe;"
+                        f"border-radius:8px;padding:7px 12px;font-size:12px;"
+                        f"color:#1e40af;'>"
+                        f"📎 <b>{html.escape(_fname)}</b> attached — AI context active</div>",
+                        unsafe_allow_html=True,
+                    )
+                with _fc2:
+                    if st.button("✕ Remove", key="btn_remove_file",
+                                 use_container_width=True):
+                        st.session_state.pop("_uploaded_file_context", None)
+                        st.session_state.pop("_uploaded_file_name",    None)
+                        st.rerun()
+
+            # ── Upload popover (outside form so st.button inside fires correctly) ──
+            _pop_col, _spacer = st.columns([0.06, 0.94])
+            with _pop_col:
+                with st.popover("\uff0b", use_container_width=True):
+                    st.markdown(
+                        "<div style='font-size:13px;font-weight:700;color:#0f172a;"
+                        "margin-bottom:8px;'>\U0001f4ce Attach a file</div>",
+                        unsafe_allow_html=True,
+                    )
+                    st.markdown(
+                        "<div style='font-size:11px;color:#64748b;margin-bottom:10px;'>"
+                        "Supported: .txt, .md, .csv, .json, .pdf, .docx, .xlsx</div>",
+                        unsafe_allow_html=True,
+                    )
+                    _up_file = st.file_uploader(
+                        "Choose file",
+                        type=["txt", "md", "csv", "json", "pdf", "docx", "xlsx", "xls", "log"],
+                        key=f"genie_file_uploader_{st.session_state.genie_input_version}",
+                        label_visibility="collapsed",
+                    )
+                    if _up_file is not None:
+                        if st.button("Generate Context from File", key="btn_gen_ctx",
+                                     type="primary", use_container_width=True):
+                            with st.spinner("Extracting & summarising with Azure OpenAI\u2026"):
+                                _raw_text     = _extract_text_from_uploaded_file(_up_file)
+                                _file_ctx_str = _azure_openai_generate_context(
+                                    _raw_text, content_type="file"
+                                )
+                            if _file_ctx_str:
+                                st.session_state["_uploaded_file_context"] = _file_ctx_str
+                                st.session_state["_uploaded_file_name"]    = _up_file.name
+                                _ctx_chat_msg = {
+                                    "role":      "assistant",
+                                    "content":   f"\U0001f4ce **Context loaded from `{_up_file.name}`:**\n\n{_file_ctx_str}",
+                                    "timestamp": pd.Timestamp.now(),
+                                    "response":  None,
+                                    "_is_context_msg": True,
+                                }
+                                if "genie_messages" not in st.session_state:
+                                    st.session_state.genie_messages = []
+                                st.session_state.genie_messages.append(_ctx_chat_msg)
+                            else:
+                                st.error("Could not extract context. Check Azure OpenAI config.")
+                            st.rerun()
+
+            # ── Chat input row (text input | Send button) ─────────────────────────
             with st.form("genie_question_form", clear_on_submit=True):
-                inp_col, btn_col = st.columns([0.88, 0.12])
+                inp_col, btn_col = st.columns([0.82, 0.18])
                 with inp_col:
                     user_query = st.text_input(
                         "Ask",
@@ -10269,7 +10556,7 @@ Respond with THREE sections (ONLY these headers, no extra text):
                         key=f"genie_chat_input_{st.session_state.genie_input_version}",
                     )
                 with btn_col:
-                    send_clicked = st.form_submit_button("Send →")
+                    send_clicked = st.form_submit_button("Send \u2192", use_container_width=True)
 
             if send_clicked and user_query:
                 st.session_state.selected_analysis   = "custom"
