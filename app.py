@@ -10845,7 +10845,7 @@ Respond with THREE sections (ONLY these headers, no extra text):
                     if _up_file is not None:
                         if st.button("Generate Context from File", key="btn_gen_ctx",
                                      type="primary", use_container_width=True):
-                            with st.spinner("Extracting & summarising with Azure OpenAI\u2026"):
+                            with st.spinner("Extracting & summarising the Context \u2026"):
                                 _raw_text     = _extract_text_from_uploaded_file(_up_file)
                                 _file_ctx_str = _azure_openai_generate_context(
                                     _raw_text, content_type="file"
