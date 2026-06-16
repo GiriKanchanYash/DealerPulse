@@ -2416,6 +2416,86 @@ class GenieChatPersistence:
             print(f"[CHAT PERSIST] purge_old_sessions failed: {str(e)[:150]}",
                   file=__import__('sys').stderr)
 
+    # ── 7-day history from genie_context_memory ───────────────────────────────
+    def load_context_memory_7days(self, username: str = "") -> list:
+        """Return all Q&A rows from genie_context_memory for this user in the
+        last 7 days, ordered newest-first.
+
+        Args:
+            username: App-level username (st.session_state["username"]).
+                      Falls back to self._user (SYSTEM_USER) if empty.
+        """
+        try:
+
+            # Prefer the app-login username that was written by genie_middleware
+            _uname = (username or "").strip()
+            if not _uname:
+                _uname = st.session_state.get("username", "UNKNOWN")
+
+            user_esc = _uname.replace("'", "''")
+
+            # Build SQL — if username is empty/unknown fetch all rows for debug
+            if user_esc and user_esc.upper() not in ("", "UNKNOWN"):
+                where_user = f"AND Username = '{user_esc}'"
+            else:
+                where_user = ""   # no user filter — debug fallback
+
+            sql = f"""
+                SELECT
+                    ChatId,
+                    SessionId,
+                    Username,
+                    Question,
+                    DescriptiveAnalysis,
+                    PrescriptiveAnalysis,
+                    PredictiveAnalysis,
+                    AnswerSummary,
+                    ChatDate,
+                    CreatedAt
+                FROM [{Config.WAREHOUSE_SCHEMA}].[GENIE_CONTEXT_MEMORY]
+                WHERE ChatDate >= CAST(DATEADD(day, -7, GETUTCDATE()) AS DATE)
+                {where_user}
+                ORDER BY CreatedAt DESC
+                OFFSET 0 ROWS FETCH NEXT 200 ROWS ONLY
+            """
+            print(f"[CTX_MEM] query user='{_uname}'",
+                  file=__import__('sys').stderr)
+
+            df = run_warehouse_df(sql)
+
+            print(f"[CTX_MEM] rows returned: {len(df)}", file=__import__('sys').stderr)
+
+            if df.empty:
+                return []
+
+            rows = []
+            for _, r in df.iterrows():
+                # Normalise ChatDate — may come back as date/str/Timestamp
+                _cd = r.get("ChatDate", "")
+                try:
+                    _cd = str(pd.Timestamp(_cd).date()) if _cd else ""
+                except Exception:
+                    _cd = str(_cd)
+
+                rows.append({
+                    "chat_id":      r.get("ChatId"),
+                    "session_id":   str(r.get("SessionId", "") or ""),
+                    "username":     str(r.get("Username", "") or ""),
+                    "question":     str(r.get("Question", "") or ""),
+                    "descriptive":  str(r.get("DescriptiveAnalysis", "") or ""),
+                    "prescriptive": str(r.get("PrescriptiveAnalysis", "") or ""),
+                    "predictive":   str(r.get("PredictiveAnalysis", "") or ""),
+                    "summary":      str(r.get("AnswerSummary", "") or ""),
+                    "chat_date":    _cd,
+                    "created_at":   pd.Timestamp(r["CreatedAt"]) if r.get("CreatedAt") else pd.Timestamp.now(),
+                })
+            return rows
+
+        except Exception as e:
+            print(f"[CTX_MEM] load_context_memory_7days failed: {str(e)[:400]}",
+                  file=__import__('sys').stderr)
+            return []
+
 
 class DealerPerformanceForecaster:
     """Generate time-series forecasts for dealer metrics."""
@@ -10095,19 +10175,91 @@ Respond with THREE sections (ONLY these headers, no extra text):
                 )
 
             with hdr_dl:
-                # Download current chat as markdown
-                _md_content = _build_chat_md()
-                _md_filename = (
-                    "genie_chat_" + datetime.now().strftime("%Y%m%d_%H%M") + ".md"
-                )
+                # ── Export MD: 7-day full history OR current session ──────────
+                _sel_date_export = st.session_state.get("_chats_selected_date")
+                _cp_export       = st.session_state.get("chat_persistence")
+                if _sel_date_export and _cp_export:
+                    # A specific day is selected in the Chats panel — build that day's MD
+                    _all_rows_exp = st.session_state.get("_ctx_mem_7days", [])
+                    _day_rows = [r for r in _all_rows_exp
+                                 if r.get("chat_date") == _sel_date_export]
+                    _day_rows = sorted(_day_rows, key=lambda r: r["created_at"])
+                    try:
+                        _exp_day_label = pd.Timestamp(_sel_date_export).strftime("%B %d, %Y")
+                    except Exception:
+                        _exp_day_label = _sel_date_export
+                    _exp_lines = [
+                        f"# Chat History — {_exp_day_label}", "",
+                        f"*Exported {datetime.now().strftime('%Y-%m-%d %H:%M')}*", "", "---", ""
+                    ]
+                    for _qi, _row in enumerate(_day_rows):
+                        _exp_lines.append(f"## Q{_qi+1}: {_row.get('question','')}")
+                        _exp_lines.append("")
+                        if _row.get("descriptive"):
+                            _exp_lines += ["### Descriptive Analysis", _row["descriptive"], ""]
+                        if _row.get("prescriptive"):
+                            _exp_lines += ["### Prescriptive Analysis", _row["prescriptive"], ""]
+                        if _row.get("predictive"):
+                            _exp_lines += ["### Predictive Analysis", _row["predictive"], ""]
+                        _exp_lines += ["---", ""]
+                    _md_content  = "\n".join(_exp_lines)
+                    _md_filename = f"chat_{_sel_date_export}.md"
+                    _export_label = f"Export {_exp_day_label}"
+                    _export_disabled = len(_day_rows) == 0
+                elif _cp_export:
+                    # No day selected — export full 7-day history from genie_context_memory
+                    _all_rows_exp = st.session_state.get("_ctx_mem_7days")
+                    if _all_rows_exp is None:
+                        try:
+                            _all_rows_exp = _cp_export.load_context_memory_7days(username=st.session_state.get("username",""))
+                            st.session_state["_ctx_mem_7days"] = _all_rows_exp
+                        except Exception:
+                            _all_rows_exp = []
+                    from collections import defaultdict as _ddict_exp
+                    _by_date_exp = _ddict_exp(list)
+                    for _row in _all_rows_exp:
+                        _by_date_exp[_row["chat_date"]].append(_row)
+                    _sorted_dates_exp = sorted(_by_date_exp.keys())
+                    _exp_lines = [
+                        "# Genie Chat History — Last 7 Days", "",
+                        f"*Exported {datetime.now().strftime('%Y-%m-%d %H:%M')}*", "", "---", ""
+                    ]
+                    for _dstr in _sorted_dates_exp:
+                        try:
+                            _dlbl = pd.Timestamp(_dstr).strftime("%A, %B %d, %Y")
+                        except Exception:
+                            _dlbl = _dstr
+                        _exp_lines += [f"# {_dlbl}", ""]
+                        _day_rows_exp = sorted(_by_date_exp[_dstr], key=lambda r: r["created_at"])
+                        for _qi, _row in enumerate(_day_rows_exp):
+                            _exp_lines.append(f"## Q{_qi+1}: {_row.get('question','')}")
+                            _exp_lines.append("")
+                            if _row.get("descriptive"):
+                                _exp_lines += ["### Descriptive Analysis", _row["descriptive"], ""]
+                            if _row.get("prescriptive"):
+                                _exp_lines += ["### Prescriptive Analysis", _row["prescriptive"], ""]
+                            if _row.get("predictive"):
+                                _exp_lines += ["### Predictive Analysis", _row["predictive"], ""]
+                            _exp_lines += ["---", ""]
+                    _md_content      = "\n".join(_exp_lines)
+                    _md_filename     = "genie_history_7days_" + datetime.now().strftime("%Y%m%d") + ".md"
+                    _export_label    = "Export 7-Day MD"
+                    _export_disabled = len(_all_rows_exp) == 0
+                else:
+                    # Fallback — export current session only
+                    _md_content      = _build_chat_md()
+                    _md_filename     = "genie_chat_" + datetime.now().strftime("%Y%m%d_%H%M") + ".md"
+                    _export_label    = "Export MD"
+                    _export_disabled = msg_count == 0
+
                 st.download_button(
-                    label="Export MD",
+                    label=_export_label,
                     data=_md_content,
                     file_name=_md_filename,
                     mime="text/markdown",
                     use_container_width=True,
-                    disabled=msg_count == 0,
-                    help="Download this conversation as a Markdown file",
+                    disabled=_export_disabled,
+                    help="Download chat history as Markdown",
                     key="btn_dl_chat",
                 )
 
@@ -10121,129 +10273,299 @@ Respond with THREE sections (ONLY these headers, no extra text):
                     key="btn_clear",
                 )
 
-            # ── Handle 📂 Chats — show previous sessions panel ───────────────────
+            # ── Handle Chats button toggle ────────────────────────────────────────
             if chats_clicked:
-                st.session_state["show_chats_panel"] = not st.session_state.get("show_chats_panel", False)
-                # Always re-fetch sessions when panel is opened
-                if st.session_state["show_chats_panel"]:
-                    cp_tmp = st.session_state.get("chat_persistence")
-                    if cp_tmp:
+                is_open = st.session_state.get("show_chats_panel", False)
+                if is_open:
+                    # Close panel
+                    st.session_state["show_chats_panel"] = False
+                    st.session_state.pop("_chats_selected_date", None)
+                else:
+                    # Open panel and fetch data
+                    st.session_state["show_chats_panel"] = True
+                    st.session_state.pop("_chats_selected_date", None)
+                    _cp_open = st.session_state.get("chat_persistence")
+                    if _cp_open:
                         try:
-                            st.session_state["_all_sessions_cache"] = cp_tmp.load_all_sessions()
-                        except Exception:
-                            st.session_state["_all_sessions_cache"] = []
+                            st.session_state["_ctx_mem_7days"] = _cp_open.load_context_memory_7days(
+                                username=st.session_state.get("username", "")
+                            )
+                        except Exception as _e_open:
+                            st.session_state["_ctx_mem_7days"] = []
+                            print(f"[CHATS PANEL] load failed: {_e_open}", file=__import__('sys').stderr)
 
+            # ── Render chats panel ────────────────────────────────────────────────
             if st.session_state.get("show_chats_panel", False):
-                all_sess = st.session_state.get("_all_sessions_cache", [])
-                cp_tmp   = st.session_state.get("chat_persistence")
+                import uuid as _uuid_panel
+                from collections import defaultdict as _dd
+
+                all_rows = st.session_state.get("_ctx_mem_7days", [])
+                sel_date = st.session_state.get("_chats_selected_date")  # "YYYY-MM-DD" or None
+
+                # Group by chat_date
+                by_date = _dd(list)
+                for _r in all_rows:
+                    by_date[_r["chat_date"]].append(_r)
+                sorted_dates = sorted(by_date.keys(), reverse=True)  # newest date first
+
+                def _rel_time(ts):
+                    """Return human-readable relative time string from a Timestamp."""
+                    try:
+                        _now = pd.Timestamp.utcnow().tz_localize(None)
+                        _ts  = pd.Timestamp(ts).tz_localize(None)
+                        _sec = max(0, (_now - _ts).total_seconds())
+                        if _sec < 60:
+                            return "just now"
+                        elif _sec < 3600:
+                            m = int(_sec / 60)
+                            return f"{m} min ago"
+                        elif _sec < 86400:
+                            h = int(_sec / 3600)
+                            return f"{h} hr{'s' if h > 1 else ''} ago"
+                        else:
+                            d = int(_sec / 86400)
+                            return f"{d} day{'s' if d > 1 else ''} ago"
+                    except Exception:
+                        return ""
 
                 with st.container(border=True):
+
+                    # ── Header row ────────────────────────────────────────────
+                    _hc_left, _hc_right = st.columns([3, 1], gap="small")
+                    with _hc_left:
+                        if sel_date:
+                            try:
+                                _dlbl = pd.Timestamp(sel_date).strftime("%B %d, %Y")
+                            except Exception:
+                                _dlbl = sel_date
+                            st.markdown(
+                                f"<div style='font-size:14px;font-weight:800;color:#1e40af;"
+                                f"padding-top:4px;'>📅 {_dlbl}</div>",
+                                unsafe_allow_html=True,
+                            )
+                        else:
+                            st.markdown(
+                                "<div style='font-size:14px;font-weight:800;color:#1e40af;"
+                                "padding-top:4px;'>💬 Chat History — Last 7 Days</div>",
+                                unsafe_allow_html=True,
+                            )
+                    with _hc_right:
+                        if sel_date:
+                            if st.button("← Back", key="btn_chats_back",
+                                         use_container_width=True, type="secondary"):
+                                st.session_state.pop("_chats_selected_date", None)
+                                st.rerun()
+                        else:
+                            if st.button("✕ Close", key="btn_panel_close",
+                                         use_container_width=True, type="secondary"):
+                                st.session_state["show_chats_panel"] = False
+                                st.rerun()
+
                     st.markdown(
-                        "<div style='display:flex;align-items:center;justify-content:space-between;"
-                        "margin-bottom:12px;'><div style='font-size:14px;font-weight:800;"
-                        "color:#1e40af;'> Previous Conversations</div></div>",
+                        "<hr style='margin:6px 0 10px 0;border-color:#e2e8f0;'>",
                         unsafe_allow_html=True,
                     )
 
-                    # ── New chat button ────────────────────────────────────────
-                    import uuid as _uuid_panel
-                    if st.button("New Conversation", key="btn_panel_new",
+                    # ── New Conversation ──────────────────────────────────────
+                    if st.button("＋ New Conversation", key="btn_panel_new",
                                  use_container_width=True, type="primary"):
-                        st.session_state.genie_messages       = []
-                        st.session_state.analyst_response     = None
-                        st.session_state.show_analysis        = False
-                        st.session_state.selected_analysis    = None
-                        st.session_state.last_custom_query    = ""
-                        st.session_state.genie_session_id     = str(_uuid_panel.uuid4())
-                        st.session_state.genie_session_label  = "Chat on " + datetime.now().strftime("%b %d %H:%M")
-                        st.session_state.chat_turn_index      = 0
-                        st.session_state.restore_dismissed    = True
-                        st.session_state["show_chats_panel"]  = False
+                        import uuid as _uuid2
+                        st.session_state.genie_messages      = []
+                        st.session_state.analyst_response    = None
+                        st.session_state.show_analysis       = False
+                        st.session_state.selected_analysis   = None
+                        st.session_state.last_custom_query   = ""
+                        st.session_state.genie_session_id    = str(_uuid2.uuid4())
+                        st.session_state.genie_session_label = "Chat on " + datetime.now().strftime("%b %d %H:%M")
+                        st.session_state.chat_turn_index     = 0
+                        st.session_state.restore_dismissed   = True
+                        st.session_state["show_chats_panel"] = False
+                        st.session_state.pop("_chats_selected_date", None)
                         st.rerun()
 
-                    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+                    st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
 
-                    if not all_sess:
-                        st.info("No previous conversations found in the last 2 days.", icon="💬")
-                    else:
-                        for s_idx, sess in enumerate(all_sess):
-                            age_h   = sess.get("age_hours", 0)
-                            label   = sess.get("session_label", "Previous chat")
-                            n_turns = sess.get("turn_count", 0)
-                            is_current = (sess.get("session_id") ==
-                                          st.session_state.get("genie_session_id", ""))
+                    # ── No data ───────────────────────────────────────────────
+                    if not all_rows and not sel_date:
+                        st.info("No chat history found for the last 7 days.", icon="💬")
+                        # Reload button for diagnostics
+                        if st.button("🔄 Retry loading", key="btn_chats_retry",
+                                     use_container_width=True):
+                            _cp_r = st.session_state.get("chat_persistence")
+                            if _cp_r:
+                                try:
+                                    st.session_state["_ctx_mem_7days"] = _cp_r.load_context_memory_7days(
+                                        username=st.session_state.get("username", "")
+                                    )
+                                except Exception:
+                                    pass
+                            st.rerun()
 
-                            if age_h < 1:   age_str = "< 1 hr ago"
-                            elif age_h < 24: age_str = f"{int(age_h)}h ago"
-                            else:            age_str = f"{int(age_h/24)}d {int(age_h%24)}h ago"
+                    # ── DAY LIST VIEW ─────────────────────────────────────────
+                    elif not sel_date:
+                        for _dstr in sorted_dates:
+                            _day_rows = by_date[_dstr]
 
-                            row_bg  = "#eff6ff" if is_current else "#f8fafc"
-                            row_bdr = "#bfdbfe" if is_current else "#e2e8f0"
+                            # earliest question of the day as preview
+                            _oldest = min(_day_rows, key=lambda r: r["created_at"])
+                            _preview_q = _oldest.get("question", "").strip()
+                            if len(_preview_q) > 72:
+                                _preview_q = _preview_q[:72] + "…"
 
-                            sl, sr = st.columns([5, 2], gap="small")
-                            with sl:
-                                current_tag = (" <span style='background:#dcfce7;color:#15803d;"
-                                              "border-radius:10px;padding:1px 8px;font-size:10px;"
-                                              "font-weight:700;'>Active</span>") if is_current else ""
+                            # relative time from the OLDEST message (preview row)
+                            _rel = _rel_time(_oldest["created_at"])
+
+                            # date label
+                            try:
+                                _today = pd.Timestamp.now().date()
+                                _yest  = _today - pd.Timedelta(days=1)
+                                _d     = pd.Timestamp(_dstr).date()
+                                if _d == _today:
+                                    _date_lbl = "Today"
+                                elif _d == _yest:
+                                    _date_lbl = "Yesterday"
+                                else:
+                                    _date_lbl = pd.Timestamp(_dstr).strftime("%A, %b %d")
+                            except Exception:
+                                _date_lbl = _dstr
+
+                            _n_q = len(_day_rows)
+                            _dc, _ac = st.columns([5, 1], gap="small")
+                            with _dc:
                                 st.markdown(
-                                    f"<div style='background:{row_bg};border:1px solid {row_bdr};"
-                                    f"border-radius:10px;padding:9px 12px;margin-bottom:4px;'>"
-                                    f"<div style='font-size:13px;font-weight:700;color:#0f172a;'>"
-                                    f"{html.escape(label)}{current_tag}</div>"
-                                    f"<div style='font-size:11px;color:#64748b;margin-top:2px;'>"
-                                    f"{n_turns} messages &nbsp;·&nbsp; {age_str}</div>"
-                                    f"</div>",
+                                    f"<div style='background:#f8fafc;border:1px solid #e2e8f0;"
+                                    f"border-left:3px solid #3b82f6;"
+                                    f"border-radius:8px;padding:10px 14px;margin-bottom:6px;'>"
+                                    f"<div style='font-size:10px;font-weight:600;color:#64748b;"
+                                    f"text-transform:uppercase;letter-spacing:0.5px;"
+                                    f"margin-bottom:4px;'>{_date_lbl}</div>"
+                                    f"<div style='font-size:13px;font-weight:600;color:#0f172a;"
+                                    f"line-height:1.4;margin-bottom:5px;'>{html.escape(_preview_q)}</div>"
+                                    f"<div style='font-size:11px;color:#94a3b8;'>"
+                                    f"{_rel} &nbsp;·&nbsp; {_n_q} question{'s' if _n_q != 1 else ''}"
+                                    f"</div></div>",
                                     unsafe_allow_html=True,
                                 )
-                            with sr:
-                                if is_current:
+                            with _ac:
+                                if st.button(
+                                    "View",
+                                    key=f"btn_view_day_{_dstr}",
+                                    use_container_width=True,
+                                    type="primary",
+                                ):
+                                    st.session_state["_chats_selected_date"] = _dstr
+                                    st.rerun()
+
+                    # ── DAY DETAIL VIEW ───────────────────────────────────────
+                    else:
+                        _detail_rows = sorted(
+                            by_date.get(sel_date, []),
+                            key=lambda r: r["created_at"],   # oldest first
+                        )
+
+                        if not _detail_rows:
+                            st.info("No records found for this date.")
+                        else:
+                            for _qi, _row in enumerate(_detail_rows):
+                                _q    = _row.get("question", "").strip()
+                                _desc = _row.get("descriptive", "").strip()
+                                _pres = _row.get("prescriptive", "").strip()
+                                _pred = _row.get("predictive", "").strip()
+                                _summ = _row.get("summary", "").strip()
+                                _rel  = _rel_time(_row["created_at"])
+
+                                # Card header: question preview + relative time
+                                _q_preview = (_q[:75] + "…") if len(_q) > 75 else _q
+                                st.markdown(
+                                    f"<div style='background:#f1f5f9;border-left:3px solid #3b82f6;"
+                                    f"border-radius:6px;padding:8px 12px;margin-bottom:4px;"
+                                    f"margin-top:{12 if _qi > 0 else 0}px;'>"
+                                    f"<div style='font-size:13px;font-weight:700;color:#0f172a;"
+                                    f"line-height:1.4;'>{html.escape(_q_preview)}</div>"
+                                    f"<div style='font-size:11px;color:#94a3b8;margin-top:3px;'>"
+                                    f"{_rel}</div></div>",
+                                    unsafe_allow_html=True,
+                                )
+
+                                with st.expander("View analysis", expanded=(_qi == 0)):
+                                    # Full question
                                     st.markdown(
-                                        "<div style='padding:10px 0;text-align:center;font-size:12px;"
-                                        "color:#64748b;'>Current</div>",
+                                        f"<div style='font-size:13px;font-weight:700;"
+                                        f"color:#1e40af;margin-bottom:10px;'>❓ {html.escape(_q)}</div>",
                                         unsafe_allow_html=True,
                                     )
-                                else:
-                                    if st.button(
-                                        "▶ Resume",
-                                        key=f"btn_panel_resume_{s_idx}",
-                                        use_container_width=True,
-                                        type="primary",
-                                    ):
-                                        with st.spinner("Loading conversation & building context..."):
-                                            msgs = cp_tmp.load_session_messages(sess["session_id"]) if cp_tmp else []
-                                            # ── Generate Azure OpenAI context from old chat ──────
-                                            _resume_context = ""
-                                            if msgs:
-                                                _transcript = "\n".join([
-                                                    f"{'User' if m['role'] == 'user' else 'AI'}: {m.get('content', '')}"
-                                                    for m in msgs if m.get("content")
-                                                ])
-                                                _resume_context = _azure_openai_generate_context(
-                                                    _transcript, content_type="chat"
-                                                )
-                                            # Inject context as a pinned system message at position 0
-                                            if _resume_context:
-                                                msgs = [{
-                                                    "role":      "assistant",
-                                                    "content":   f"📋 **Resumed session context (AI-generated):**\n\n{_resume_context}",
-                                                    "timestamp": pd.Timestamp.now(),
-                                                    "response":  None,
-                                                    "_is_context_msg": True,
-                                                }] + msgs
-                                                st.session_state["_resume_context_text"] = _resume_context
-                                        st.session_state.genie_messages      = msgs
-                                        st.session_state.chat_turn_index     = len(msgs)
-                                        st.session_state.genie_session_id    = sess["session_id"]
-                                        st.session_state.genie_session_label = sess["session_label"]
-                                        st.session_state.restore_dismissed   = True
-                                        st.session_state["show_chats_panel"] = False
-                                        st.rerun()
 
-                    st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
-                    if st.button("Close", key="btn_panel_close",
-                                 use_container_width=True, type="secondary"):
-                        st.session_state["show_chats_panel"] = False
-                        st.rerun()
+                                    if _desc:
+                                        st.markdown(
+                                            "<div style='font-size:12px;font-weight:700;"
+                                            "color:#0f172a;margin-bottom:4px;'>📊 Descriptive Analysis</div>",
+                                            unsafe_allow_html=True,
+                                        )
+                                        st.markdown(
+                                            f"<div style='font-size:13px;color:#374151;"
+                                            f"line-height:1.6;margin-bottom:10px;'>{_desc}</div>",
+                                            unsafe_allow_html=True,
+                                        )
+
+                                    if _pres:
+                                        st.markdown(
+                                            "<div style='font-size:12px;font-weight:700;"
+                                            "color:#0f172a;margin-bottom:4px;'>🎯 Prescriptive Analysis</div>",
+                                            unsafe_allow_html=True,
+                                        )
+                                        st.markdown(
+                                            f"<div style='font-size:13px;color:#374151;"
+                                            f"line-height:1.6;margin-bottom:10px;'>{_pres}</div>",
+                                            unsafe_allow_html=True,
+                                        )
+
+                                    if _pred:
+                                        st.markdown(
+                                            "<div style='font-size:12px;font-weight:700;"
+                                            "color:#0f172a;margin-bottom:4px;'>🔮 Predictive Analysis</div>",
+                                            unsafe_allow_html=True,
+                                        )
+                                        st.markdown(
+                                            f"<div style='font-size:13px;color:#374151;"
+                                            f"line-height:1.6;margin-bottom:10px;'>{_pred}</div>",
+                                            unsafe_allow_html=True,
+                                        )
+
+                                    if not (_desc or _pres or _pred) and _summ:
+                                        st.markdown(_summ)
+
+                                    if not (_desc or _pres or _pred or _summ):
+                                        st.caption("No analysis details stored for this question.")
+
+                        # Export this day's chats as MD
+                        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+                        try:
+                            _exp_dlbl = pd.Timestamp(sel_date).strftime("%B %d, %Y")
+                        except Exception:
+                            _exp_dlbl = sel_date
+                        _day_md_lines = [
+                            f"# Chat History — {_exp_dlbl}", "",
+                            f"*Exported {datetime.now().strftime('%Y-%m-%d %H:%M')}*",
+                            "", "---", "",
+                        ]
+                        for _qi2, _r2 in enumerate(_detail_rows):
+                            _day_md_lines += [f"## Q{_qi2+1}: {_r2.get('question','')}", ""]
+                            if _r2.get("descriptive"):
+                                _day_md_lines += ["### Descriptive Analysis", _r2["descriptive"], ""]
+                            if _r2.get("prescriptive"):
+                                _day_md_lines += ["### Prescriptive Analysis", _r2["prescriptive"], ""]
+                            if _r2.get("predictive"):
+                                _day_md_lines += ["### Predictive Analysis", _r2["predictive"], ""]
+                            _day_md_lines += ["---", ""]
+                        st.download_button(
+                            label=f"⬇ Export {_exp_dlbl} as MD",
+                            data="\n".join(_day_md_lines),
+                            file_name=f"chat_{sel_date}.md",
+                            mime="text/markdown",
+                            use_container_width=True,
+                            key="btn_export_day_md",
+                        )
+
 
             # ── Handle summarize ──────────────────────────────────────────────────
             if summarize_clicked:
