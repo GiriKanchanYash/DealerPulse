@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import yaml
 from datetime import datetime, timedelta
-from db_service import get_active_session, get_fabric_session, run_df, run_warehouse_df, run_warehouse_non_query
+from db_service import get_active_session, _get_warehouse_session, run_df, run_warehouse_df, run_warehouse_non_query
 from warehouse_setup import ensure_warehouse_tables
 from fabric_sql import ensure_top_limit
 import plotly.graph_objects as go
@@ -27,6 +27,12 @@ import textwrap
 
 from config import Config
 from llm_service import generate_sql, cortex_complete
+from genie_middleware import (
+    log_event,
+    log_events_upsert,
+    set_log_context,
+    update_analysis_insights,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -199,11 +205,11 @@ def _build_routing_from_yaml(yaml_content: str) -> Tuple[Dict, Dict, Dict, Dict]
 
 
 def _build_intents_from_yaml(model: dict) -> Dict:
-    """Extract INTENTS catalog from YAML cortex_training_patterns section."""
+    """Extract INTENTS catalog from YAML training_patterns section."""
     intents = {}
     
-    patterns = model.get("cortex_optimization", {}).get("cortex_training_patterns", {})
-    logging.info(f"[INTENTS BUILD] Found cortex_training_patterns sections: {list(patterns.keys())}")
+    patterns = model.get("azure_openai_optimization", {}).get("training_patterns", {})
+    logging.info(f"[INTENTS BUILD] Found training_patterns sections: {list(patterns.keys())}")
     
     priority_levels = [k for k in patterns.keys() if k.startswith("priority_")]
     logging.info(f"[INTENTS BUILD] Priority levels found: {sorted(priority_levels)}")
@@ -332,7 +338,8 @@ def _build_table_definition_from_snowflake(session, view_name: str) -> Dict:
         dimensions = []
         facts = []
         
-        for col_name, data_type in result:
+        for row in result:
+            col_name = row[0] if not hasattr(row, "keys") else row["COLUMN_NAME"]
             col_name_upper = col_name.upper()
             
             if any(suffix in col_name_upper for suffix in ("_PCT", "_PERCENT", "_DAYS", "_HOURS", "_AMOUNT", "_RATE", "_COUNT", "_TOTAL", "_MARGIN")):
@@ -411,13 +418,6 @@ def _save_yaml_locally(yaml_content: str, filename: str = "schema_metadata.yaml"
     except Exception as e:
         logging.error(f"[YAML SAVE] ❌ Failed to save locally: {e}")
         return False
-
-
-def _upload_yaml_to_snowflake(session, yaml_content: str, filename: str = "schema_metadata.yaml") -> bool:
-    """Stage upload is disabled for Fabric compatibility."""
-    logging.info("[YAML UPLOAD] Stage upload skipped")
-    return False
-
 
 def _initialize_routing_from_yaml(yaml_content: str) -> None:
     """Initialize global routing variables from YAML."""
@@ -1918,14 +1918,25 @@ class GenieQueryCache:
             return
 
         try:
+            # Store SQL with newlines preserved as \n escape sequences so
+            # that _prepare_sql() can restore them correctly on cache restore.
+            # json.dumps() safely escapes all special characters including
+            # embedded single quotes inside string literals (THEN 'STRONG' etc).
+            raw_sql_for_cache = str(response.get('sql', '') or '')
+            # Normalise real newlines → \n before JSON encoding so the JSON
+            # value is a single-line string that survives SQL round-tripping.
+            raw_sql_for_cache = raw_sql_for_cache.replace('\n', '\\n').replace('\r', '\\r')[:4000]
+
             minimal_resp = {
                 'layout':          str(response.get('layout',  'unknown'))[:50],
                 'source':          str(response.get('source',  'unknown'))[:50],
-                'sql':             str(response.get('sql', '') or '').replace('\n',' ').replace('\r',' ').replace('\t',' ')[:2000],
+                'sql':             raw_sql_for_cache,
                 'gen_ok':          bool(response.get('gen_ok', False)),
                 'response_time_ms':float(response_time_ms),
             }
+            # json.dumps gives us a safe ASCII string with all special chars escaped
             json_str     = json.dumps(minimal_resp, ensure_ascii=True)
+            # Escape single quotes for SQL literal embedding
             q_escaped    = question[:500].replace("'", "''")
             user_escaped = (self._current_user or 'UNKNOWN').replace("'", "''")
             json_escaped = json_str.replace("'", "''")
@@ -2244,7 +2255,7 @@ class GenieChatPersistence:
                         TURN_INDEX    INT            NOT NULL,
                         ROLE          VARCHAR(64)    NOT NULL,
                         CONTENT       VARCHAR(MAX)   NOT NULL,
-                        CREATED_AT    DATETIME2      NOT NULL,
+                        CREATED_AT    DATETIME2(7)   NOT NULL,
                         SQL_USED      VARCHAR(MAX),
                         SOURCE        VARCHAR(256),
                         SESSION_LABEL VARCHAR(256)
@@ -2404,6 +2415,92 @@ class GenieChatPersistence:
         except Exception as e:
             print(f"[CHAT PERSIST] purge_old_sessions failed: {str(e)[:150]}",
                   file=__import__('sys').stderr)
+
+    # ── 7-day history from genie_context_memory ───────────────────────────────
+    def load_context_memory_7days(self, username: str = "") -> list:
+        """Return all Q&A rows from genie_context_memory for this user in the
+        last 7 days, ordered newest-first.
+
+        Args:
+            username: App-level username (st.session_state["username"]).
+                      Falls back to self._user (SYSTEM_USER) if empty.
+        """
+        try:
+            import streamlit as _st
+            from db_service import run_warehouse_df as _wh_df
+            from config import Config as _Cfg
+
+            schema = _Cfg.WAREHOUSE_SCHEMA
+            table  = _Cfg.GENIE_CONTEXT_MEMORY_TABLE
+
+            # Prefer the app-login username that was written by genie_middleware
+            _uname = (username or "").strip()
+            if not _uname:
+                _uname = _st.session_state.get("username", "") or self._user or ""
+
+            user_esc = _uname.replace("'", "''")
+
+            # Build SQL — if username is empty/unknown fetch all rows for debug
+            if user_esc and user_esc.upper() not in ("", "UNKNOWN"):
+                where_user = f"AND Username = '{user_esc}'"
+            else:
+                where_user = ""   # no user filter — debug fallback
+
+            sql = f"""
+                SELECT
+                    ChatId,
+                    SessionId,
+                    Username,
+                    Question,
+                    DescriptiveAnalysis,
+                    PrescriptiveAnalysis,
+                    PredictiveAnalysis,
+                    AnswerSummary,
+                    ChatDate,
+                    CreatedAt
+                FROM [{schema}].[{table}]
+                WHERE ChatDate >= CAST(DATEADD(day, -7, GETUTCDATE()) AS DATE)
+                {where_user}
+                ORDER BY CreatedAt DESC
+                OFFSET 0 ROWS FETCH NEXT 200 ROWS ONLY
+            """
+            print(f"[CTX_MEM] query user='{_uname}' schema={schema} table={table}",
+                  file=__import__('sys').stderr)
+
+            df = _wh_df(sql)
+
+            print(f"[CTX_MEM] rows returned: {len(df)}", file=__import__('sys').stderr)
+
+            if df.empty:
+                return []
+
+            rows = []
+            for _, r in df.iterrows():
+                # Normalise ChatDate — may come back as date/str/Timestamp
+                _cd = r.get("ChatDate", "")
+                try:
+                    _cd = str(pd.Timestamp(_cd).date()) if _cd else ""
+                except Exception:
+                    _cd = str(_cd)
+
+                rows.append({
+                    "chat_id":      r.get("ChatId"),
+                    "session_id":   str(r.get("SessionId", "") or ""),
+                    "username":     str(r.get("Username", "") or ""),
+                    "question":     str(r.get("Question", "") or ""),
+                    "descriptive":  str(r.get("DescriptiveAnalysis", "") or ""),
+                    "prescriptive": str(r.get("PrescriptiveAnalysis", "") or ""),
+                    "predictive":   str(r.get("PredictiveAnalysis", "") or ""),
+                    "summary":      str(r.get("AnswerSummary", "") or ""),
+                    "chat_date":    _cd,
+                    "created_at":   pd.Timestamp(r["CreatedAt"]) if r.get("CreatedAt") else pd.Timestamp.now(),
+                })
+            return rows
+
+        except Exception as e:
+            print(f"[CTX_MEM] load_context_memory_7days failed: {str(e)[:400]}",
+                  file=__import__('sys').stderr)
+            return []
 
 
 class DealerPerformanceForecaster:
@@ -3478,7 +3575,7 @@ If these constraints cannot be satisfied, respond with a clear explanation of th
 @st.cache_resource
 def get_fabric_connection():
     """Return the cached Microsoft Fabric Lakehouse SQL session."""
-    return get_fabric_session()
+    return _get_warehouse_session()
 
 
 @st.cache_resource
@@ -3786,7 +3883,7 @@ def fetch_order_fulfillment(_session, filters=None, sla_days=7):
         SELECT
             COUNT(*) AS TOTAL,
             SUM(CASE WHEN AVG_ORDER_LEAD_TIME_DAYS <= {int(sla_days)} THEN 1 ELSE 0 END) AS ON_TIME
-        FROM fa.INFORMATION_MART.vw_order_lead_time
+        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_order_lead_time
         WHERE 1=1
         """
         if filters and 'dealer' in filters and filters['dealer'] != 'All Dealers':
@@ -3899,15 +3996,15 @@ def fetch_strategic_insights(_session):
     """Fetch strategic insights data"""
     # If vw_STRATEGIC_INSIGHTS view exists, use it; otherwise return mock insights
     try:
-        query = """
-        SELECT 
-            INSIGHT_TEXT,
-            PRIORITY_LEVEL,
-            DEALER_COUNT,
-            IMPACT_PERCENTAGE
-        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_strategic_insights
-        ORDER BY PRIORITY_LEVEL DESC
-        """
+        query = f"""
+                    SELECT 
+                        INSIGHT_TEXT,
+                        PRIORITY_LEVEL,
+                        DEALER_COUNT,
+                        IMPACT_PERCENTAGE
+                    FROM INFORMATION_MART.vw_strategic_insights
+                    ORDER BY PRIORITY_LEVEL DESC
+                """
         return run_df(query).to_pandas()
     except Exception as e:
         # View doesn't exist or query failed - use mock data
@@ -6200,7 +6297,7 @@ def render_attention_and_priority(session, filters):
 def fetch_revenue_trend(_session):
     """Fetch revenue trend data by period for graph"""
     try:
-        query = """
+        query = f"""
         SELECT 
             dealer_name,
             PERIOD_YEAR,
@@ -6220,17 +6317,21 @@ def fetch_profit_margin_by_dealer(_session):
     """Fetch profit margin across dealers for comparison - aggregated by dealer"""
     try:
         query = f"""
-        SELECT 
-            DEALER_NAME,
-            AVG(GROSS_PROFIT_MARGIN_PCT) AS GROSS_PROFIT_MARGIN_PCT,
-            SUM(TOTAL_REVENUE) AS TOTAL_REVENUE
-        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_gross_profit_margin
-        WHERE DEALER_NAME IS NOT NULL
-        GROUP BY DEALER_NAME
-        ORDER BY GROSS_PROFIT_MARGIN_PCT DESC
-        OFFSET 0 ROWS FETCH NEXT 15 ROWS ONLY
+        WITH RankedDealers AS (
+    SELECT 
+        DEALER_NAME,
+        AVG(GROSS_PROFIT_MARGIN_PCT) AS GROSS_PROFIT_MARGIN_PCT,
+        SUM(TOTAL_REVENUE) AS TOTAL_REVENUE,
+        ROW_NUMBER() OVER (ORDER BY AVG(GROSS_PROFIT_MARGIN_PCT) DESC) AS rn
+    FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_gross_profit_margin
+    WHERE DEALER_NAME IS NOT NULL
+    GROUP BY DEALER_NAME
+)
+SELECT DEALER_NAME, GROSS_PROFIT_MARGIN_PCT, TOTAL_REVENUE
+FROM RankedDealers
+WHERE rn BETWEEN 1 AND 15;
         """
-        result = run_df(query).to_pandas()
+        result = _session.sql(query).to_pandas()
         result.columns = result.columns.str.lower()
         return result
     except Exception as e:
@@ -6242,16 +6343,20 @@ def fetch_sales_by_product_category(_session):
     """Fetch sales data by product category"""
     try:
         query = f"""
-        SELECT 
-            PRODUCT_CATEGORY,
-            SUM(TOTAL_REVENUE) AS total_revenue,
-            SUM(TOTAL_QUANTITY) AS total_quantity
-        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_sales_per_product_category
-        GROUP BY PRODUCT_CATEGORY
-        ORDER BY total_revenue DESC
-        OFFSET 0 ROWS FETCH NEXT 20 ROWS ONLY
+        WITH RankedCategories AS (
+    SELECT 
+        PRODUCT_CATEGORY,
+        SUM(TOTAL_REVENUE) AS total_revenue,
+        SUM(TOTAL_QUANTITY) AS total_quantity,
+        ROW_NUMBER() OVER (ORDER BY SUM(TOTAL_REVENUE) DESC) AS rn
+    FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_sales_per_product_category
+    GROUP BY PRODUCT_CATEGORY
+)
+SELECT PRODUCT_CATEGORY, total_revenue, total_quantity
+FROM RankedCategories
+WHERE rn BETWEEN 1 AND 20;
         """
-        result = run_df(query).to_pandas()
+        result = _session.sql(query).to_pandas()
         result.columns = result.columns.str.lower()
         return result
     except Exception as e:
@@ -6263,19 +6368,23 @@ def fetch_cash_conversion_cycle_trend(_session):
     """Fetch CCC trend data for graph - aggregated by dealer"""
     try:
         query = f"""
-        SELECT 
-            DEALER_NAME,
-            AVG(DSO) AS DSO,
-            AVG(DIO) AS DIO,
-            AVG(DPO) AS DPO,
-            AVG(CCC) AS CCC
-        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_cash_conversion_cycle
-        WHERE DEALER_NAME IS NOT NULL
-        GROUP BY DEALER_NAME
-        ORDER BY CCC DESC
-        OFFSET 0 ROWS FETCH NEXT 10 ROWS ONLY
+        WITH RankedDealers AS (
+    SELECT 
+        DEALER_NAME,
+        AVG(DSO) AS DSO,
+        AVG(DIO) AS DIO,
+        AVG(DPO) AS DPO,
+        AVG(CCC) AS CCC,
+        ROW_NUMBER() OVER (ORDER BY AVG(CCC) DESC) AS rn
+    FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_cash_conversion_cycle
+    WHERE DEALER_NAME IS NOT NULL
+    GROUP BY DEALER_NAME
+)
+SELECT DEALER_NAME, DSO, DIO, DPO, CCC
+FROM RankedDealers
+WHERE rn BETWEEN 1 AND 10;
         """
-        result = run_df(query).to_pandas()
+        result = _session.sql(query).to_pandas()
         result.columns = result.columns.str.lower()
         return result
     except Exception as e:
@@ -6287,16 +6396,20 @@ def fetch_order_lead_time_distribution(_session):
     """Fetch order lead time distribution by dealer"""
     try:
         query = f"""
-        SELECT 
-            DEALER_NAME,
-            AVG(AVG_ORDER_LEAD_TIME_DAYS) AS avg_lead_time,
-            COUNT(*) AS order_count
-        FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_order_lead_time
-        GROUP BY DEALER_NAME
-        ORDER BY avg_lead_time DESC
-        OFFSET 0 ROWS FETCH NEXT 10 ROWS ONLY
+        WITH RankedDealers AS (
+    SELECT 
+        DEALER_NAME,
+        AVG(AVG_ORDER_LEAD_TIME_DAYS) AS avg_lead_time,
+        COUNT(*) AS order_count,
+        ROW_NUMBER() OVER (ORDER BY AVG(AVG_ORDER_LEAD_TIME_DAYS) DESC) AS rn
+    FROM {Config.FABRIC_DATABASE}.INFORMATION_MART.vw_order_lead_time
+    GROUP BY DEALER_NAME
+)
+SELECT DEALER_NAME, avg_lead_time, order_count
+FROM RankedDealers
+WHERE rn BETWEEN 1 AND 10;
         """
-        result = run_df(query).to_pandas()
+        result = _session.sql(query).to_pandas()
         result.columns = result.columns.str.lower()
         return result
     except Exception as e:
@@ -7513,12 +7626,18 @@ def _build_minimal_schema(question: str, model: dict) -> str:
         if any(kw in q_lower for kw in keywords.split("|")):
             relevant_tables.update(table_names)
     
-    # If no keyword match, include 10 most common tables
+    # If no keyword match, include ALL tables from the model
+    # (analysis questions need the full schema context)
     if not relevant_tables:
-        relevant_tables = {
-            "vw_sales_volume", "vw_gross_profit_margin", "vw_dealer_revenue_growth",
-            "vw_average_repair_turnaround_time", "vw_cash_conversion_cycle"
-        }
+        if model and "tables" in model:
+            relevant_tables = {t.get("name", "") for t in model.get("tables", []) if t.get("name")}
+        if not relevant_tables:
+            relevant_tables = {
+                "vw_sales_volume", "vw_gross_profit_margin", "vw_dealer_revenue_growth",
+                "vw_average_repair_turnaround_time", "vw_cash_conversion_cycle",
+                "vw_dealer_contribution_margin", "vw_stock_availability_dealer",
+                "vw_backorder_incidence", "vw_order_lead_time", "vw_dealer_location",
+            }
     
     # Build schema with only relevant tables - ULTRA CLEAR FORMAT WITH EXACT COLUMN NAMES
     schema_lines = []
@@ -7587,27 +7706,22 @@ def is_sql_obviously_bad(sql: str) -> Tuple[bool, str]:
         if re.search(wrong_col, sql, flags=re.IGNORECASE):
             return True, f"Wrong column name detected: {msg}"
     
-    # Check for abbreviated column names in FROM clauses (likely mistakes)
-    # Pattern: SELECT alias.SHORT_NAME (where SHORT_NAME is wrong abbreviation)
-    select_clause = sql.split("FROM")[0] if "FROM" in sql else ""
-    
-    # Additional check: if SELECT appears to have unqualified columns
-    # Split SELECT clause by comma, check each column
-    if "SELECT" in select_clause.upper():
-        select_start = select_clause.upper().find("SELECT") + 6
-        select_content = select_clause[select_start:]
-        
-        # If we see raw column names without dots, that's a problem
-        # Pattern: SELECT COLUMN_NAME, another_column (without table.column)
-        # This is a loose heuristic but helps catch obvious mistakes
-        words = re.findall(r'\b([A-Z_]+)\b', select_content)
-        raw_cols = [w for w in words if w not in ('FROM', 'WHERE', 'JOIN', 'ON', 'AND', 'OR', 'AS', 'WITH')]
-        
-        # If we have raw columns (not qualified), that's bad
-        if raw_cols and "." not in select_content:
-            # But allow if it's simple aggregates
-            if not re.search(r'COUNT|SUM|AVG|MIN|MAX|DISTINCT', select_content, flags=re.IGNORECASE):
-                return True, f"Unqualified columns detected (must use table.column format): {', '.join(raw_cols[:3])}"
+    # For non-CTE queries: check for unqualified column references.
+    # CTE outer SELECTs legitimately reference CTE alias columns without dots.
+    is_cte = bool(re.match(r'\s*WITH\b', sql, flags=re.IGNORECASE))
+    if not is_cte:
+        select_clause = sql.split("FROM")[0] if "FROM" in sql else ""
+        if "SELECT" in select_clause.upper():
+            select_start = select_clause.upper().find("SELECT") + 6
+            select_content = select_clause[select_start:]
+            words = re.findall(r'\b([A-Z_]+)\b', select_content)
+            raw_cols = [w for w in words if w not in (
+                'FROM', 'WHERE', 'JOIN', 'ON', 'AND', 'OR', 'AS', 'WITH',
+                'TOP', 'DISTINCT', 'ALL', 'NULL', 'NOT'
+            )]
+            if raw_cols and "." not in select_content:
+                if not re.search(r'COUNT|SUM|AVG|MIN|MAX|DISTINCT', select_content, flags=re.IGNORECASE):
+                    return True, f"Unqualified columns (must use alias.column): {', '.join(raw_cols[:3])}"
 
     return False, ""
 
@@ -7654,60 +7768,98 @@ def _qualify_sql_table_names(sql: str) -> str:
         if pre.upper().endswith("INFORMATION_MART.") or pre.upper().endswith(DB_SCHEMA.upper() + "."):
             result.append(m.group(0))  # already qualified — keep as-is
         else:
-            result.append(f"{DB_SCHEMA}.{m.group(1).upper()}")
+            result.append(f"{DB_SCHEMA}.{m.group(1).lower()}")
         i = m.end()
 
     return "".join(result)
 
 
+def _extract_sql_error_detail(error_str: str) -> str:
+    """Parse a SQL error string into a human-readable hint."""
+    invalid_col_match = re.search(
+        r"(?:invalid identifier|invalid column name|unknown column)[:\s]*['\"]?([A-Za-z_]\w*)['\"]?",
+        error_str, flags=re.IGNORECASE
+    )
+    if invalid_col_match:
+        invalid_col = invalid_col_match.group(1)
+        hint = ""
+        col_up = invalid_col.upper()
+        if "AVG_HOURS" in col_up:
+            hint = " (Did you mean AVG_TURNAROUND_HOURS?)"
+        elif col_up == "MARGIN_PCT":
+            hint = " (Try GROSS_PROFIT_MARGIN_PCT or CONTRIBUTION_MARGIN_PCT instead)"
+        elif "LEAD_TIME_DAYS" in col_up and "AVG_ORDER" not in col_up:
+            hint = " (Did you mean AVG_ORDER_LEAD_TIME_DAYS?)"
+        return f"Invalid column '{invalid_col}'{hint}"
+    if "not in GROUP BY" in error_str or "not contained in either an aggregate" in error_str:
+        return "Column in SELECT must be in GROUP BY or inside an aggregate (COUNT/SUM/AVG/MIN/MAX)"
+    if "ambiguous" in error_str.lower():
+        return "Ambiguous column reference — qualify with table alias (alias.column_name)"
+    if "incorrect syntax" in error_str.lower():
+        tok = re.search(r"near ['\"]([^'\"]+)['\"]", error_str, re.IGNORECASE)
+        token_hint = f" near '{tok.group(1)}'" if tok else ""
+        return f"Incorrect T-SQL syntax{token_hint}"
+    return error_str[:250]
+
+
 def compile_check_sql(session, sql: str) -> Tuple[bool, Optional[str]]:
-    """Compile-only check using EXPLAIN. Returns (ok:bool, error:str|None)."""
+    """
+    Compile-only check compatible with Microsoft Fabric T-SQL.
+
+    Replaces the Snowflake-specific EXPLAIN command (not supported on Fabric)
+    with two T-SQL compatible strategies:
+      1. SET NOEXEC ON  — parse & compile without executing
+      2. TOP 0 subquery — execute returning zero rows (validates schema/columns)
+
+    Returns (ok: bool, error: str | None).
+    """
     import time as time_module
     t0 = time_module.time()
+
+    sql_clean = (sql or "").strip().rstrip(";")
+    if not sql_clean:
+        return False, "Empty SQL"
+
+    sql_clean = _qualify_sql_table_names(sql_clean)
+    print(f"[TIMING] Starting T-SQL compile check...")
+    print(f"[SQL DEBUG] Checking SQL:\n{sql_clean[:400]}")
+
+    # Strategy 1: SET NOEXEC ON (T-SQL standard dry-run)
     try:
-        sql_clean = (sql or "").strip().rstrip(";")
-        # Auto-qualify any unqualified vw_* table names before checking
-        sql_clean = _qualify_sql_table_names(sql_clean)
-        print(f"[TIMING] Starting EXPLAIN compile check...")
-        print(f"[SQL DEBUG] Checking SQL:\n{sql_clean[:400]}")  # Log first 400 chars
-        session.sql(f"EXPLAIN {sql_clean}").collect()
+        check_batch = f"SET NOEXEC ON;\n{sql_clean};\nSET NOEXEC OFF;"
+        session.sql(check_batch).collect()
         t1 = time_module.time()
-        print(f"[TIMING] EXPLAIN compile check passed: {t1-t0:.2f}s")
+        print(f"[TIMING] SET NOEXEC compile check passed: {t1-t0:.2f}s")
         return True, None
     except Exception as e:
-        t1 = time_module.time()
-        print(f"[TIMING] EXPLAIN compile check FAILED after {t1-t0:.2f}s")
-        
-        # Extract and analyze the error
         error_str = str(e)
-        print(f"[SQL ERROR] Full error: {error_str[:500]}")
-        
-        # Extract column name if it's an invalid identifier error
-        invalid_col_match = re.search(r"invalid identifier '([^']+)'", error_str, flags=re.IGNORECASE)
-        if invalid_col_match:
-            invalid_col = invalid_col_match.group(1)
-            hint = ""
-            
-            # Provide helpful hints for common mistakes
-            if invalid_col.upper().endswith("_HOURS"):
-                if "AVG_HOURS" in invalid_col.upper():
-                    hint = " (Did you mean AVG_TURNAROUND_HOURS?)"
-            elif "MARGIN" in invalid_col.upper():
-                if "MARGIN_PCT" in invalid_col.upper():
-                    hint = " (Try GROSS_PROFIT_MARGIN_PCT or CONTRIBUTION_MARGIN_PCT instead)"
-            elif "LEAD_TIME" in invalid_col.upper():
-                if not "AVG_ORDER" in invalid_col.upper():
-                    hint = " (Did you mean AVG_ORDER_LEAD_TIME_DAYS?)"
-            
-            detailed_error = f"Invalid column '{invalid_col}'{hint}"
-        elif "not in GROUP BY" in error_str:
-            detailed_error = "Column referenced in SELECT but not in GROUP BY - all non-aggregated columns must be in GROUP BY"
-        elif "ambiguous column" in error_str.lower():
-            detailed_error = "Ambiguous column reference - use table alias: table.column_name"
-        else:
-            detailed_error = error_str[:200]
-        
-        return False, detailed_error
+        noexec_unsupported = any(kw in error_str.lower() for kw in (
+            "noexec", "set statement", "not supported", "not allowed", "cannot be set"
+        ))
+        if not noexec_unsupported:
+            t1 = time_module.time()
+            print(f"[TIMING] SET NOEXEC compile check FAILED: {t1-t0:.2f}s")
+            print(f"[SQL ERROR] {error_str[:500]}")
+            return False, _extract_sql_error_detail(error_str)
+        print(f"[TIMING] SET NOEXEC not supported — trying TOP 0 fallback...")
+
+    # Strategy 2: SELECT TOP 0 FROM (<query>) — validates without returning data
+    try:
+        top0_sql = f"SELECT TOP 0 * FROM ({sql_clean}) AS _cc_"
+        session.sql(top0_sql).collect()
+        t1 = time_module.time()
+        print(f"[TIMING] TOP 0 compile check passed: {t1-t0:.2f}s")
+        return True, None
+    except Exception as e2:
+        t1 = time_module.time()
+        error_str2 = str(e2)
+        print(f"[TIMING] TOP 0 compile check FAILED: {t1-t0:.2f}s")
+        print(f"[SQL ERROR] {error_str2[:500]}")
+        # If the wrapper itself is the problem, pass optimistically
+        if "_cc_" in error_str2 and "incorrect syntax" in error_str2.lower():
+            print(f"[TIMING] Compile check infrastructure unavailable — passing optimistically")
+            return True, None
+        return False, _extract_sql_error_detail(error_str2)
 
 
 
@@ -7847,7 +7999,8 @@ OFFSET 0 ROWS FETCH NEXT 50 ROWS ONLY;
 AVAILABLE TABLES AND COLUMNS:
 {tables_with_columns}
 
-Return ONLY executable Snowflake SQL. No markdown. No explanations. No comments. Just valid SQL.
+Return ONLY executable Microsoft Fabric T-SQL. No markdown. No explanations. No comments. Just valid T-SQL.
+DO NOT use Snowflake-specific syntax: no QUALIFY, no ::FLOAT, no $1, no ILIKE, no SAMPLE.
 DO NOT ABBREVIATE COLUMN NAMES - USE EXACT NAMES SHOWN ABOVE.
 REMEMBER: Every SELECT must use qualified table.column format with aliases. Never use bare column names.""".strip()
 
@@ -7867,23 +8020,61 @@ REMEMBER: Every SELECT must use qualified table.column format with aliases. Neve
 
         bad, reason = is_sql_obviously_bad(sql)
         if bad:
-            print(f"[TIMING] SQL rejected: {reason}")
+            print(f"[SQL REJECT] {reason}")
             return sql, False, f"Rejected: {reason}"
 
-        print(f"[TIMING] About to compile check...")
-        t5 = time_module.time()
         ok, err = compile_check_sql(session, sql)
-        t6 = time_module.time()
-        print(f"[TIMING] Compile check: {t6-t5:.2f}s - Result: {'OK' if ok else 'FAILED'}")
-        
+        print(f"[TIMING] Compile check: {'OK' if ok else 'FAILED'}")
         if ok:
             t_total = time_module.time() - t0
-            print(f"[TIMING] TOTAL CORTEX SQL GEN: {t_total:.2f}s")
+            print(f"[TIMING] TOTAL SQL GEN: {t_total:.2f}s")
             return sql, True, None
-        
-        # Don't retry - faster to return error if initial generation fails
-        # User can select from verified_queries instead
-        return sql, False, f"Compile failed: {err[:100]}"
+
+        # ── Execute-and-recover: compile check may be a false negative ─
+        # Some Fabric endpoint configs reject SET NOEXEC / TOP-0 wrappers
+        # but the underlying SQL is valid T-SQL. Try running it directly.
+        if sql and "Rejected:" not in (err or ""):
+            print(f"[FALLBACK] Compile check failed ({err}). Trying direct execution...")
+            try:
+                from db_service import run_df as _run_df_fb
+                test_df = _run_df_fb(sql)
+                print(f"[FALLBACK] Direct execution SUCCEEDED ({len(test_df)} rows).")
+                return sql, True, None
+            except Exception as exec_exc:
+                exec_err_str = str(exec_exc)
+                print(f"[FALLBACK] Direct execution failed: {exec_err_str[:200]}")
+
+                # ── Retry with error-correction prompt ────────────────
+                print(f"[RETRY] Generating error-corrected SQL...")
+                correction_prompt = (
+                    f"{prompt}\n\n"
+                    f"PREVIOUS ATTEMPT FAILED:\n{sql}\n\n"
+                    f"ERROR: {exec_err_str[:300]}\n\n"
+                    f"Fix the SQL for Microsoft Fabric T-SQL. Common causes:\n"
+                    f"- Wrong column names — check exact names in schema above\n"
+                    f"- Missing schema prefix: use INFORMATION_MART.vw_table_name\n"
+                    f"- Ambiguous columns: qualify every column with alias.column\n"
+                    f"- Snowflake syntax used: rewrite as T-SQL\n"
+                    f"Return ONLY fixed T-SQL."
+                )
+                try:
+                    retry_df = pd.DataFrame(
+                        [{"SQL_QUERY": cortex_complete(correction_prompt, temperature=0.1)}]
+                    )
+                    raw2 = (retry_df.at[0, "SQL_QUERY"] if not retry_df.empty else "") or ""
+                    sql2 = extract_first_select_sql(raw2)
+                    sql2 = _qualify_sql_table_names(sql2)
+                    if sql2 and not is_sql_obviously_bad(sql2)[0]:
+                        from db_service import run_df as _run_df_retry
+                        retry_exec = _run_df_retry(sql2)
+                        print(f"[RETRY] Corrected SQL SUCCEEDED ({len(retry_exec)} rows).")
+                        return sql2, True, None
+                except Exception as retry_exc:
+                    print(f"[RETRY] Also failed: {str(retry_exc)[:150]}")
+
+        t_total = time_module.time() - t0
+        print(f"[TIMING] All generation attempts failed after {t_total:.2f}s")
+        return sql or "", False, f"Compile failed: {(err or '')[:150]}"
 
     except Exception as e:
         t_total = time_module.time() - t0
@@ -8009,6 +8200,123 @@ Respond with THREE sections (ONLY these headers and content, no extra text):
     except Exception as e:
         return {"layout": "cortex", "error": f"Could not generate quick analysis: {str(e)}"}
 		
+def _azure_openai_generate_context(content: str, content_type: str = "file") -> str:
+    """Use Azure OpenAI to generate a concise context summary from file content
+    or a previous chat transcript.  Returns a plain-text context string that
+    can be prepended to any Cortex prompt.
+
+    Args:
+        content      : Raw text (file content OR chat transcript).
+        content_type : "file" | "chat" — controls the system prompt.
+    Returns:
+        A short context paragraph (≤400 words) ready for injection.
+    """
+    try:
+        from openai import AzureOpenAI as _AzureOpenAI
+        from config import Config as _Cfg
+
+        _client = _AzureOpenAI(
+            azure_endpoint=_Cfg.AZURE_OPENAI_ENDPOINT,
+            api_key=_Cfg.AZURE_OPENAI_API_KEY,
+            api_version=_Cfg.AZURE_OPENAI_API_VERSION,
+        )
+
+        if content_type == "chat":
+            system_msg = (
+                "You are a dealership analytics assistant. "
+                "Summarize the following conversation transcript into a concise context block "
+                "(max 300 words). Preserve: dealer names, KPI values, date ranges, and key findings. "
+                "Format as a single paragraph starting with 'Previous session context:'."
+            )
+            user_msg = f"Conversation transcript:\n{content[:6000]}"
+        else:
+            system_msg = (
+                "You are a dealership analytics assistant. "
+                "Analyze the uploaded document content and extract a concise context summary "
+                "(max 300 words) that will help answer dealer analytics questions. "
+                "Include: key metrics, dealer names, date ranges, and important figures. "
+                "Format as a single paragraph starting with 'Uploaded file context:'."
+            )
+            user_msg = f"Document content:\n{content[:6000]}"
+
+        resp = _client.chat.completions.create(
+            model=_Cfg.AZURE_OPENAI_DEPLOYMENT,
+            messages=[
+                {"role": "system", "content": system_msg},
+                {"role": "user",   "content": user_msg},
+            ],
+            max_tokens=500,
+            temperature=0.2,
+        )
+        return resp.choices[0].message.content.strip()
+    except Exception as e:
+        print(f"[AZURE OPENAI CONTEXT] Failed: {str(e)[:200]}", file=__import__('sys').stderr)
+        return ""
+
+
+def _extract_text_from_uploaded_file(uploaded_file) -> str:
+    """Extract plain text from a Streamlit UploadedFile object.
+    Supports: .txt, .md, .csv, .json, .pdf, .docx, .xlsx
+    Falls back to raw UTF-8 decode for unknown types.
+    """
+    import io
+    name = uploaded_file.name.lower()
+    raw  = uploaded_file.read()
+
+    try:
+        if name.endswith((".txt", ".md", ".log")):
+            return raw.decode("utf-8", errors="replace")
+
+        if name.endswith(".csv"):
+            import csv
+            lines = raw.decode("utf-8", errors="replace").splitlines()
+            return "\n".join(lines[:200])  # first 200 rows
+
+        if name.endswith(".json"):
+            import json as _json
+            obj = _json.loads(raw.decode("utf-8", errors="replace"))
+            return _json.dumps(obj, indent=2)[:6000]
+
+        if name.endswith(".pdf"):
+            try:
+                import pdfplumber
+                with pdfplumber.open(io.BytesIO(raw)) as pdf:
+                    pages = [p.extract_text() or "" for p in pdf.pages[:10]]
+                return "\n".join(pages)
+            except Exception:
+                pass
+            try:
+                from pypdf import PdfReader
+                reader = PdfReader(io.BytesIO(raw))
+                return "\n".join(
+                    p.extract_text() or "" for p in reader.pages[:10]
+                )
+            except Exception:
+                return "[PDF text extraction unavailable]"
+
+        if name.endswith(".docx"):
+            try:
+                import docx as _docx
+                doc = _docx.Document(io.BytesIO(raw))
+                return "\n".join(p.text for p in doc.paragraphs)
+            except Exception:
+                return "[DOCX extraction unavailable]"
+
+        if name.endswith((".xlsx", ".xls")):
+            try:
+                import pandas as _pd
+                df = _pd.read_excel(io.BytesIO(raw), nrows=200)
+                return df.to_csv(index=False)
+            except Exception:
+                return "[Excel extraction unavailable]"
+
+        # Fallback
+        return raw.decode("utf-8", errors="replace")[:6000]
+
+    except Exception as e:
+        return f"[File extraction error: {str(e)[:100]}]"
+
+
 def _genie_debug(msg: str):
     """Append debug messages to session state and stderr."""
     try:
@@ -8222,6 +8530,16 @@ def call_cortex_analyst(
 
     full_context = memory_prefix + context_prefix
 
+    # ── Inject Azure OpenAI resume context (from previous session) ───────────
+    _resume_ctx = st.session_state.get("_resume_context_text", "")
+    if _resume_ctx:
+        full_context = _resume_ctx + "\n\n" + full_context
+
+    # ── Inject uploaded-file context ─────────────────────────────────────────
+    _file_ctx = st.session_state.get("_uploaded_file_context", "")
+    if _file_ctx:
+        full_context = _file_ctx + "\n\n" + full_context
+
     cache = st.session_state.genie_cache
 
     # ── Context-aware cache key ───────────────────────────────────────────
@@ -8270,20 +8588,40 @@ def call_cortex_analyst(
         _genie_debug(f"[CACHE HIT] Fetch: {cache_fetch_time_ms:.2f}ms")
         cached_response['cache_fetch_time_ms'] = cache_fetch_time_ms
 
-        # Re-execute SQL if DataFrame missing (legacy entries)
+        # Re-execute SQL if DataFrame missing (legacy / DB-cached entries)
         vendors_df_cached = cached_response.get("vendors_df")
         has_df = vendors_df_cached is not None and (
             not isinstance(vendors_df_cached, pd.DataFrame)
             or not vendors_df_cached.empty
         )
         if cached_response.get("layout") == "quick" and cached_response.get("sql") and not has_df:
-            print(f"[CACHE RESTORE] Re-executing SQL...", file=sys.stderr)
+            raw_sql = cached_response["sql"]
+            # Sanitize cached SQL before re-execution:
+            # SQL stored in the Warehouse cache can have literal \\n sequences,
+            # mangled single quotes from INSERT escaping, and three-part DB prefixes
+            # that Fabric SQL rejects. _prepare_sql() from db_service fixes all of these.
             try:
-                df = run_df(cached_response["sql"])
+                from db_service import _prepare_sql as _db_prepare_sql
+                sanitized_sql = _db_prepare_sql(raw_sql)
+            except Exception:
+                # Inline fallback if import not available
+                sanitized_sql = raw_sql.replace('\\n', '\n').replace('\\r', '\r').replace('\\t', '\t')
+                sanitized_sql = re.sub(
+                    r'\b\w+\.INFORMATION_MART\.(vw_\w+)',
+                    r'INFORMATION_MART.\1',
+                    sanitized_sql, flags=re.IGNORECASE
+                )
+            # Fix triple single-quotes that can appear after cache round-trip
+            # e.g. THEN ''STRONG'' becomes THEN 'STRONG' after one unescaping
+            sanitized_sql = re.sub(r"'{3,}", "''", sanitized_sql)
+            print(f"[CACHE RESTORE] Re-executing sanitized SQL...", file=sys.stderr)
+            try:
+                df = run_df(sanitized_sql)
                 cached_response["vendors_df"] = df
+                cached_response["sql"] = sanitized_sql
                 print(f"[CACHE RESTORE] Got {len(df)} rows", file=sys.stderr)
             except Exception as e:
-                print(f"[CACHE RESTORE] Failed: {str(e)[:100]}", file=sys.stderr)
+                print(f"[CACHE RESTORE] Sanitized SQL failed: {str(e)[:200]}", file=sys.stderr)
 
         return cached_response
 
@@ -8557,6 +8895,26 @@ def call_cortex_analyst(
                 "text_summary":     text_summary,
                 "response_time_ms": response_time_ms,
             }
+            # ── Log to genie_context_memory (PATH 2 success) ─────────────
+            try:
+                import streamlit as _st
+                _sid  = _st.session_state.get("genie_session_id", "unknown")
+                _user = _st.session_state.get("username", "UNKNOWN")
+                set_log_context(question=query_text, session_id=_sid, user=_user)
+                log_event(
+                    "SQL_GENERATED",
+                    {
+                        "question":   query_text,
+                        "session_id": _sid,
+                        "user":       _user,
+                        "sql":        gen_sql[:4000],
+                        "summary":    text_summary[:2000],
+                        "relevance":  1.0 if not df.empty else 0.5,
+                        "details":    f"rows={len(df)}, time={response_time_ms:.0f}ms",
+                    },
+                )
+            except Exception as _le:
+                logger.debug("[GENIE MEMORY] log_event PATH2 failed: %s", _le)
             cache.set(query_text, response,
                       response_time_ms=response_time_ms,
                       cache_key_override=ctx_hash)
@@ -8575,15 +8933,81 @@ def call_cortex_analyst(
             }
 
     elif gen_sql:
-        return {
-            "layout":           "sql_failed",
-            "sql":              gen_sql,
-            "error":            f"SQL validation failed: {gen_err}",
-            "source":           "generated_sql",
-            "gen_ok":           False,
-            "gen_error":        gen_err,
-            "response_time_ms": (time_module.time() - t_start) * 1000,
-        }
+        # Compile check reported failure but SQL was generated.
+        # Attempt direct execution — compile check can be a false negative
+        # on Fabric endpoints that do not support SET NOEXEC / TOP 0.
+        print(f"[PATH 2 FALLBACK] ok=False but SQL exists — trying direct execution...")
+        t1 = time_module.time()
+        try:
+            df = run_df(gen_sql)
+            t2 = time_module.time()
+            print(f"[PATH 2 FALLBACK] Direct execution SUCCEEDED: {df.shape}")
+            text_summary = ""
+            if not df.empty:
+                try:
+                    data_summary = (
+                        f"Query returned {len(df)} rows:\n{df.head(5).to_string()}"
+                        + (f"\n... and {len(df)-5} more rows" if len(df) > 5 else "")
+                    )
+                    cortex_prompt = (
+                        f"{full_context}"
+                        f"Analyze this dealer question:\n\n"
+                        f"Question: {query_text.strip()}\nData: {data_summary}\n\n"
+                        f"Respond with THREE sections:\n\n"
+                        f"**Descriptive** - What the data shows (2-3 sentences)\n\n"
+                        f"**Prescriptive** - Recommendations (5-7 bullets with •)\n\n"
+                        f"**Predictive** - Expected Impact 12-24 months (1-2 sentences)"
+                    )
+                    tdf = pd.DataFrame([{"RESPONSE": cortex_complete(cortex_prompt, temperature=0.2)}])
+                    text_summary = (tdf.at[0, "RESPONSE"] if not tdf.empty else "") or ""
+                except Exception as te:
+                    print(f"[TEXT GEN] Failed in fallback path: {str(te)[:80]}")
+            response_time_ms = (t2 - t1) * 1000
+            response = {
+                "layout":           "quick",
+                "vendors_df":       df,
+                "sql":              gen_sql,
+                "source":           "generated_sql",
+                "gen_ok":           True,
+                "gen_error":        None,
+                "text_summary":     text_summary,
+                "response_time_ms": response_time_ms,
+            }
+            # ── Log to genie_context_memory (PATH 2 fallback success) ────
+            try:
+                import streamlit as _st
+                _sid  = _st.session_state.get("genie_session_id", "unknown")
+                _user = _st.session_state.get("username", "UNKNOWN")
+                set_log_context(question=query_text, session_id=_sid, user=_user)
+                log_event(
+                    "SQL_GENERATED_FALLBACK",
+                    {
+                        "question":   query_text,
+                        "session_id": _sid,
+                        "user":       _user,
+                        "sql":        gen_sql[:4000],
+                        "summary":    text_summary[:2000],
+                        "relevance":  1.0 if not df.empty else 0.5,
+                        "details":    f"rows={len(df)}, time={response_time_ms:.0f}ms (fallback path)",
+                    },
+                )
+            except Exception as _le:
+                logger.debug("[GENIE MEMORY] log_event PATH2-fallback failed: %s", _le)
+            cache.set(query_text, response,
+                      response_time_ms=response_time_ms,
+                      cache_key_override=ctx_hash)
+            return response
+        except Exception as exec_err:
+            print(f"[PATH 2 FALLBACK] Direct execution also failed: {str(exec_err)[:150]}")
+            return {
+                "layout":           "sql_failed",
+                "sql":              gen_sql,
+                "error":            f"SQL validation and execution both failed. Compile: {gen_err} | Exec: {str(exec_err)[:120]}",
+                "source":           "generated_sql",
+                "gen_ok":           False,
+                "gen_error":        gen_err,
+                "response_time_ms": (time_module.time() - t_start) * 1000,
+            }
 
     # ═════════════════════════════════════════════════════════════════════
     # PATH 3 — Text-only fallback
@@ -8648,6 +9072,26 @@ def call_cortex_analyst(
         cache.set(query_text, response,
                   response_time_ms=response_time_ms,
                   cache_key_override=ctx_hash)
+        # ── Log to genie_context_memory (PATH 3 text-only fallback) ──────
+        try:
+            import streamlit as _st
+            _sid  = _st.session_state.get("genie_session_id", "unknown")
+            _user = _st.session_state.get("username", "UNKNOWN")
+            set_log_context(question=query_text, session_id=_sid, user=_user)
+            log_event(
+                "TEXT_FALLBACK",
+                {
+                    "question":   query_text,
+                    "session_id": _sid,
+                    "user":       _user,
+                    "sql":        response.get("sql", ""),
+                    "summary":    response_text[:2000],
+                    "relevance":  0.7,
+                    "details":    f"text-only fallback, time={response_time_ms:.0f}ms",
+                },
+            )
+        except Exception as _le:
+            logger.debug("[GENIE MEMORY] log_event PATH3 failed: %s", _le)
         return response
 
     except Exception as e:
@@ -8655,11 +9099,6 @@ def call_cortex_analyst(
             "message": {"content": [{"type": "text", "text": f"⚠️ Error: {str(e)[:150]}"}]},
             "response_time_ms": (time_module.time() - t_start) * 1000,
         }
-
-
-# ============================================================================
-# PREDICTIVE ANALYSIS HELPER FUNCTIONS
-# ============================================================================
 
 def extract_dealer_name_from_question(question: str) -> Optional[str]:
     """
@@ -9002,6 +9441,11 @@ def render_genie_page(session):
         "restore_dismissed":        False,  # True if user clicked "Start fresh"
         "_all_sessions_cache":      [],     # list of session dicts from DB
         "show_chats_panel":         False,  # toggle for the chats browser panel
+        # ── file attachment context ───────────────────────────────────────────
+        "_uploaded_file_context":   "",     # Azure OpenAI summary of uploaded file
+        "_uploaded_file_name":      "",     # display name of uploaded file
+        # ── resume session context ────────────────────────────────────────────
+        "_resume_context_text":     "",     # Azure OpenAI summary of resumed session
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -9084,6 +9528,12 @@ def render_genie_page(session):
             "timestamp": pd.Timestamp.now(), "response": None,
         })
 
+        # ── Set middleware log context so downstream modules (db_service, etc.)
+        #    can read question / session_id / user without extra parameters. ──
+        _sid  = st.session_state.get("genie_session_id", "unknown")
+        _user = st.session_state.get("username", "UNKNOWN")
+        set_log_context(question=query, session_id=_sid, user=_user)
+
         # Use context_turns slider value — *2 for user+assistant pairs
         turns   = st.session_state.get("context_turns", 6)
         history = st.session_state.genie_messages[-(turns * 2):]
@@ -9163,6 +9613,59 @@ def render_genie_page(session):
                 memory_obj.refresh()
             except Exception as e:
                 print(f"[MEMORY REFRESH] {str(e)[:80]}", file=__import__('sys').stderr)
+
+        # ── Persist to genie_context_memory via middleware ────────────────
+        # Extract structured fields from the response so each analysis type
+        # (descriptive / prescriptive / predictive) is stored in its own column.
+        try:
+            _sql_used     = ""
+            _text_summary = ""
+            _desc         = ""
+            _pres         = ""
+            _pred         = ""
+            _tables       = ""
+            _row_count    = 0
+
+            if isinstance(response, dict):
+                _sql_used     = (response.get("sql") or "")[:4000]
+                _text_summary = response.get("text_summary", "") or ""
+                _row_count    = len(response["vendors_df"]) if isinstance(
+                    response.get("vendors_df"), pd.DataFrame) else 0
+
+                # Re-use the same section parser that the UI uses so the stored
+                # text exactly matches what the user sees on screen.
+                _desc, _pres, _pred = parse_analysis_sections(_text_summary)
+                _desc = _desc or ""
+                _pres = _pres or ""
+                _pred = _pred or ""
+
+                # Derive table names from the SQL (best-effort)
+                if _sql_used:
+                    _tables = ", ".join(
+                        re.findall(r'\bFROM\s+(?:\w+\.)?(\w+)', _sql_used, re.IGNORECASE)
+                        + re.findall(r'\bJOIN\s+(?:\w+\.)?(\w+)', _sql_used, re.IGNORECASE)
+                    )[:500]
+
+            log_events_upsert(
+                event_type=analysis_type.upper(),
+                payload={
+                    "question":              query,
+                    "session_id":            st.session_state.get("genie_session_id", "unknown"),
+                    "user":                  st.session_state.get("username", "UNKNOWN"),
+                    "sql":                   _sql_used,
+                    "summary":               _text_summary[:2000],
+                    "full_answer":           _text_summary,
+                    "descriptive_analysis":  _desc,
+                    "prescriptive_analysis": _pres,
+                    "predictive_analysis":   _pred,
+                    "tables":                _tables,
+                    "filters":               "",
+                    "relevance":             1.0 if _row_count > 0 else 0.5,
+                    "details":               f"rows={_row_count}, source={response.get('source','') if isinstance(response, dict) else ''}",
+                },
+            )
+        except Exception as _mem_exc:
+            logger.warning("[GENIE MEMORY] log_events_upsert failed: %s", str(_mem_exc)[:120])
 
         return response
 
@@ -9273,6 +9776,17 @@ Respond with THREE sections (ONLY these headers, no extra text):
                         unsafe_allow_html=True)
 
         desc_s, pres_s, pred_s = parse_analysis_sections(text_summary)
+
+        # ── Persist the rendered analysis text back to the DB so the stored
+        #    row reflects exactly what the user sees (called best-effort). ──
+        try:
+            update_analysis_insights(
+                descriptive=desc_s or "",
+                prescriptive=pres_s or "",
+                predictive=pred_s or "",
+            )
+        except Exception as _ua_exc:
+            logger.debug("[GENIE MEMORY] update_analysis_insights failed: %s", _ua_exc)
 
         if desc_s:
             st.markdown(f"""
@@ -9575,14 +10089,66 @@ Respond with THREE sections (ONLY these headers, no extra text):
                                               "Chat on " + datetime.now().strftime("%b %d %H:%M"))
                 lines = [f"# Genie Chat — {label}", "",
                          f"*Exported {datetime.now().strftime('%Y-%m-%d %H:%M')}*", "", "---", ""]
+                turn = 0
                 for m in msgs:
                     role    = m.get("role", "user")
                     content = m.get("content", "") or ""
                     if not content:
                         continue
-                    prefix = "**You:** " if role == "user" else "**AI Assistant:** "
-                    lines.append(prefix + content)
-                    lines.append("")
+                    if role == "user":
+                        turn += 1
+                        lines.append(f"## Turn {turn}")
+                        lines.append("")
+                        lines.append(f"**Question:** {content}")
+                        lines.append("")
+                    else:
+                        # For assistant messages, also render analysis sections if available
+                        resp = m.get("response")
+                        text_summary = ""
+                        if isinstance(resp, dict):
+                            text_summary = resp.get("text_summary", "") or ""
+                        if text_summary:
+                            import re as _re_md
+                            def _ext_section(text, *markers):
+                                for marker in markers:
+                                    pat = r'\b(?:\d+\.?\s+)?(?:\*{0,2})' + marker + r'(?:\*{0,2})(?:\s*[-:])?'
+                                    m2 = _re_md.search(pat, text, _re_md.IGNORECASE)
+                                    if m2:
+                                        return m2
+                                return None
+                            di = _ext_section(text_summary, "descriptive")
+                            pi = _ext_section(text_summary, "prescriptive")
+                            ri = _ext_section(text_summary, "predictive")
+                            def _slice(sm, *others):
+                                if not sm: return ""
+                                s = sm.end(); e = len(text_summary)
+                                for o in others:
+                                    if o and o.start() > sm.start():
+                                        e = min(e, o.start())
+                                return text_summary[s:e].strip().lstrip("*").strip()
+                            desc = _slice(di, pi, ri)
+                            pres = _slice(pi, ri, di)
+                            pred = _slice(ri, di, pi)
+                            if desc:
+                                lines.append("### Descriptive Analysis")
+                                lines.append(desc)
+                                lines.append("")
+                            if pres:
+                                lines.append("### Prescriptive Analysis")
+                                lines.append(pres)
+                                lines.append("")
+                            if pred:
+                                lines.append("### Predictive Analysis")
+                                lines.append(pred)
+                                lines.append("")
+                            if not (desc or pres or pred):
+                                lines.append(f"**AI Assistant:** {content}")
+                                lines.append("")
+                        else:
+                            lines.append(f"**AI Assistant:** {content}")
+                            lines.append("")
+                        lines.append("---")
+                        lines.append("")
                 return "\n".join(lines)
 
             # 5-column header: title | Chats | Summarize | Download | Clear
@@ -9615,19 +10181,91 @@ Respond with THREE sections (ONLY these headers, no extra text):
                 )
 
             with hdr_dl:
-                # Download current chat as markdown
-                _md_content = _build_chat_md()
-                _md_filename = (
-                    "genie_chat_" + datetime.now().strftime("%Y%m%d_%H%M") + ".md"
-                )
+                # ── Export MD: 7-day full history OR current session ──────────
+                _sel_date_export = st.session_state.get("_chats_selected_date")
+                _cp_export       = st.session_state.get("chat_persistence")
+                if _sel_date_export and _cp_export:
+                    # A specific day is selected in the Chats panel — build that day's MD
+                    _all_rows_exp = st.session_state.get("_ctx_mem_7days", [])
+                    _day_rows = [r for r in _all_rows_exp
+                                 if r.get("chat_date") == _sel_date_export]
+                    _day_rows = sorted(_day_rows, key=lambda r: r["created_at"])
+                    try:
+                        _exp_day_label = pd.Timestamp(_sel_date_export).strftime("%B %d, %Y")
+                    except Exception:
+                        _exp_day_label = _sel_date_export
+                    _exp_lines = [
+                        f"# Chat History — {_exp_day_label}", "",
+                        f"*Exported {datetime.now().strftime('%Y-%m-%d %H:%M')}*", "", "---", ""
+                    ]
+                    for _qi, _row in enumerate(_day_rows):
+                        _exp_lines.append(f"## Q{_qi+1}: {_row.get('question','')}")
+                        _exp_lines.append("")
+                        if _row.get("descriptive"):
+                            _exp_lines += ["### Descriptive Analysis", _row["descriptive"], ""]
+                        if _row.get("prescriptive"):
+                            _exp_lines += ["### Prescriptive Analysis", _row["prescriptive"], ""]
+                        if _row.get("predictive"):
+                            _exp_lines += ["### Predictive Analysis", _row["predictive"], ""]
+                        _exp_lines += ["---", ""]
+                    _md_content  = "\n".join(_exp_lines)
+                    _md_filename = f"chat_{_sel_date_export}.md"
+                    _export_label = f"Export {_exp_day_label}"
+                    _export_disabled = len(_day_rows) == 0
+                elif _cp_export:
+                    # No day selected — export full 7-day history from genie_context_memory
+                    _all_rows_exp = st.session_state.get("_ctx_mem_7days")
+                    if _all_rows_exp is None:
+                        try:
+                            _all_rows_exp = _cp_export.load_context_memory_7days(username=st.session_state.get("username",""))
+                            st.session_state["_ctx_mem_7days"] = _all_rows_exp
+                        except Exception:
+                            _all_rows_exp = []
+                    from collections import defaultdict as _ddict_exp
+                    _by_date_exp = _ddict_exp(list)
+                    for _row in _all_rows_exp:
+                        _by_date_exp[_row["chat_date"]].append(_row)
+                    _sorted_dates_exp = sorted(_by_date_exp.keys())
+                    _exp_lines = [
+                        "# Genie Chat History — Last 7 Days", "",
+                        f"*Exported {datetime.now().strftime('%Y-%m-%d %H:%M')}*", "", "---", ""
+                    ]
+                    for _dstr in _sorted_dates_exp:
+                        try:
+                            _dlbl = pd.Timestamp(_dstr).strftime("%A, %B %d, %Y")
+                        except Exception:
+                            _dlbl = _dstr
+                        _exp_lines += [f"# {_dlbl}", ""]
+                        _day_rows_exp = sorted(_by_date_exp[_dstr], key=lambda r: r["created_at"])
+                        for _qi, _row in enumerate(_day_rows_exp):
+                            _exp_lines.append(f"## Q{_qi+1}: {_row.get('question','')}")
+                            _exp_lines.append("")
+                            if _row.get("descriptive"):
+                                _exp_lines += ["### Descriptive Analysis", _row["descriptive"], ""]
+                            if _row.get("prescriptive"):
+                                _exp_lines += ["### Prescriptive Analysis", _row["prescriptive"], ""]
+                            if _row.get("predictive"):
+                                _exp_lines += ["### Predictive Analysis", _row["predictive"], ""]
+                            _exp_lines += ["---", ""]
+                    _md_content      = "\n".join(_exp_lines)
+                    _md_filename     = "genie_history_7days_" + datetime.now().strftime("%Y%m%d") + ".md"
+                    _export_label    = "Export 7-Day MD"
+                    _export_disabled = len(_all_rows_exp) == 0
+                else:
+                    # Fallback — export current session only
+                    _md_content      = _build_chat_md()
+                    _md_filename     = "genie_chat_" + datetime.now().strftime("%Y%m%d_%H%M") + ".md"
+                    _export_label    = "Export MD"
+                    _export_disabled = msg_count == 0
+
                 st.download_button(
-                    label="Export MD",
+                    label=_export_label,
                     data=_md_content,
                     file_name=_md_filename,
                     mime="text/markdown",
                     use_container_width=True,
-                    disabled=msg_count == 0,
-                    help="Download this conversation as a Markdown file",
+                    disabled=_export_disabled,
+                    help="Download chat history as Markdown",
                     key="btn_dl_chat",
                 )
 
@@ -9641,109 +10279,299 @@ Respond with THREE sections (ONLY these headers, no extra text):
                     key="btn_clear",
                 )
 
-            # ── Handle 📂 Chats — show previous sessions panel ───────────────────
+            # ── Handle Chats button toggle ────────────────────────────────────────
             if chats_clicked:
-                st.session_state["show_chats_panel"] = not st.session_state.get("show_chats_panel", False)
-                # Always re-fetch sessions when panel is opened
-                if st.session_state["show_chats_panel"]:
-                    cp_tmp = st.session_state.get("chat_persistence")
-                    if cp_tmp:
+                is_open = st.session_state.get("show_chats_panel", False)
+                if is_open:
+                    # Close panel
+                    st.session_state["show_chats_panel"] = False
+                    st.session_state.pop("_chats_selected_date", None)
+                else:
+                    # Open panel and fetch data
+                    st.session_state["show_chats_panel"] = True
+                    st.session_state.pop("_chats_selected_date", None)
+                    _cp_open = st.session_state.get("chat_persistence")
+                    if _cp_open:
                         try:
-                            st.session_state["_all_sessions_cache"] = cp_tmp.load_all_sessions()
-                        except Exception:
-                            st.session_state["_all_sessions_cache"] = []
+                            st.session_state["_ctx_mem_7days"] = _cp_open.load_context_memory_7days(
+                                username=st.session_state.get("username", "")
+                            )
+                        except Exception as _e_open:
+                            st.session_state["_ctx_mem_7days"] = []
+                            print(f"[CHATS PANEL] load failed: {_e_open}", file=__import__('sys').stderr)
 
+            # ── Render chats panel ────────────────────────────────────────────────
             if st.session_state.get("show_chats_panel", False):
-                all_sess = st.session_state.get("_all_sessions_cache", [])
-                cp_tmp   = st.session_state.get("chat_persistence")
+                import uuid as _uuid_panel
+                from collections import defaultdict as _dd
+
+                all_rows = st.session_state.get("_ctx_mem_7days", [])
+                sel_date = st.session_state.get("_chats_selected_date")  # "YYYY-MM-DD" or None
+
+                # Group by chat_date
+                by_date = _dd(list)
+                for _r in all_rows:
+                    by_date[_r["chat_date"]].append(_r)
+                sorted_dates = sorted(by_date.keys(), reverse=True)  # newest date first
+
+                def _rel_time(ts):
+                    """Return human-readable relative time string from a Timestamp."""
+                    try:
+                        _now = pd.Timestamp.utcnow().tz_localize(None)
+                        _ts  = pd.Timestamp(ts).tz_localize(None)
+                        _sec = max(0, (_now - _ts).total_seconds())
+                        if _sec < 60:
+                            return "just now"
+                        elif _sec < 3600:
+                            m = int(_sec / 60)
+                            return f"{m} min ago"
+                        elif _sec < 86400:
+                            h = int(_sec / 3600)
+                            return f"{h} hr{'s' if h > 1 else ''} ago"
+                        else:
+                            d = int(_sec / 86400)
+                            return f"{d} day{'s' if d > 1 else ''} ago"
+                    except Exception:
+                        return ""
 
                 with st.container(border=True):
+
+                    # ── Header row ────────────────────────────────────────────
+                    _hc_left, _hc_right = st.columns([3, 1], gap="small")
+                    with _hc_left:
+                        if sel_date:
+                            try:
+                                _dlbl = pd.Timestamp(sel_date).strftime("%B %d, %Y")
+                            except Exception:
+                                _dlbl = sel_date
+                            st.markdown(
+                                f"<div style='font-size:14px;font-weight:800;color:#1e40af;"
+                                f"padding-top:4px;'>📅 {_dlbl}</div>",
+                                unsafe_allow_html=True,
+                            )
+                        else:
+                            st.markdown(
+                                "<div style='font-size:14px;font-weight:800;color:#1e40af;"
+                                "padding-top:4px;'>💬 Chat History — Last 7 Days</div>",
+                                unsafe_allow_html=True,
+                            )
+                    with _hc_right:
+                        if sel_date:
+                            if st.button("← Back", key="btn_chats_back",
+                                         use_container_width=True, type="secondary"):
+                                st.session_state.pop("_chats_selected_date", None)
+                                st.rerun()
+                        else:
+                            if st.button("✕ Close", key="btn_panel_close",
+                                         use_container_width=True, type="secondary"):
+                                st.session_state["show_chats_panel"] = False
+                                st.rerun()
+
                     st.markdown(
-                        "<div style='display:flex;align-items:center;justify-content:space-between;"
-                        "margin-bottom:12px;'><div style='font-size:14px;font-weight:800;"
-                        "color:#1e40af;'> Previous Conversations</div></div>",
+                        "<hr style='margin:6px 0 10px 0;border-color:#e2e8f0;'>",
                         unsafe_allow_html=True,
                     )
 
-                    # ── New chat button ────────────────────────────────────────
-                    import uuid as _uuid_panel
-                    if st.button("New Conversation", key="btn_panel_new",
+                    # ── New Conversation ──────────────────────────────────────
+                    if st.button("＋ New Conversation", key="btn_panel_new",
                                  use_container_width=True, type="primary"):
-                        st.session_state.genie_messages       = []
-                        st.session_state.analyst_response     = None
-                        st.session_state.show_analysis        = False
-                        st.session_state.selected_analysis    = None
-                        st.session_state.last_custom_query    = ""
-                        st.session_state.genie_session_id     = str(_uuid_panel.uuid4())
-                        st.session_state.genie_session_label  = "Chat on " + datetime.now().strftime("%b %d %H:%M")
-                        st.session_state.chat_turn_index      = 0
-                        st.session_state.restore_dismissed    = True
-                        st.session_state["show_chats_panel"]  = False
+                        import uuid as _uuid2
+                        st.session_state.genie_messages      = []
+                        st.session_state.analyst_response    = None
+                        st.session_state.show_analysis       = False
+                        st.session_state.selected_analysis   = None
+                        st.session_state.last_custom_query   = ""
+                        st.session_state.genie_session_id    = str(_uuid2.uuid4())
+                        st.session_state.genie_session_label = "Chat on " + datetime.now().strftime("%b %d %H:%M")
+                        st.session_state.chat_turn_index     = 0
+                        st.session_state.restore_dismissed   = True
+                        st.session_state["show_chats_panel"] = False
+                        st.session_state.pop("_chats_selected_date", None)
                         st.rerun()
 
-                    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+                    st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
 
-                    if not all_sess:
-                        st.info("No previous conversations found in the last 2 days.", icon="💬")
-                    else:
-                        for s_idx, sess in enumerate(all_sess):
-                            age_h   = sess.get("age_hours", 0)
-                            label   = sess.get("session_label", "Previous chat")
-                            n_turns = sess.get("turn_count", 0)
-                            is_current = (sess.get("session_id") ==
-                                          st.session_state.get("genie_session_id", ""))
+                    # ── No data ───────────────────────────────────────────────
+                    if not all_rows and not sel_date:
+                        st.info("No chat history found for the last 7 days.", icon="💬")
+                        # Reload button for diagnostics
+                        if st.button("🔄 Retry loading", key="btn_chats_retry",
+                                     use_container_width=True):
+                            _cp_r = st.session_state.get("chat_persistence")
+                            if _cp_r:
+                                try:
+                                    st.session_state["_ctx_mem_7days"] = _cp_r.load_context_memory_7days(
+                                        username=st.session_state.get("username", "")
+                                    )
+                                except Exception:
+                                    pass
+                            st.rerun()
 
-                            if age_h < 1:   age_str = "< 1 hr ago"
-                            elif age_h < 24: age_str = f"{int(age_h)}h ago"
-                            else:            age_str = f"{int(age_h/24)}d {int(age_h%24)}h ago"
+                    # ── DAY LIST VIEW ─────────────────────────────────────────
+                    elif not sel_date:
+                        for _dstr in sorted_dates:
+                            _day_rows = by_date[_dstr]
 
-                            row_bg  = "#eff6ff" if is_current else "#f8fafc"
-                            row_bdr = "#bfdbfe" if is_current else "#e2e8f0"
+                            # earliest question of the day as preview
+                            _oldest = min(_day_rows, key=lambda r: r["created_at"])
+                            _preview_q = _oldest.get("question", "").strip()
+                            if len(_preview_q) > 72:
+                                _preview_q = _preview_q[:72] + "…"
 
-                            sl, sr = st.columns([5, 2], gap="small")
-                            with sl:
-                                current_tag = (" <span style='background:#dcfce7;color:#15803d;"
-                                              "border-radius:10px;padding:1px 8px;font-size:10px;"
-                                              "font-weight:700;'>Active</span>") if is_current else ""
+                            # relative time from the OLDEST message (preview row)
+                            _rel = _rel_time(_oldest["created_at"])
+
+                            # date label
+                            try:
+                                _today = pd.Timestamp.now().date()
+                                _yest  = _today - pd.Timedelta(days=1)
+                                _d     = pd.Timestamp(_dstr).date()
+                                if _d == _today:
+                                    _date_lbl = "Today"
+                                elif _d == _yest:
+                                    _date_lbl = "Yesterday"
+                                else:
+                                    _date_lbl = pd.Timestamp(_dstr).strftime("%A, %b %d")
+                            except Exception:
+                                _date_lbl = _dstr
+
+                            _n_q = len(_day_rows)
+                            _dc, _ac = st.columns([5, 1], gap="small")
+                            with _dc:
                                 st.markdown(
-                                    f"<div style='background:{row_bg};border:1px solid {row_bdr};"
-                                    f"border-radius:10px;padding:9px 12px;margin-bottom:4px;'>"
-                                    f"<div style='font-size:13px;font-weight:700;color:#0f172a;'>"
-                                    f"{html.escape(label)}{current_tag}</div>"
-                                    f"<div style='font-size:11px;color:#64748b;margin-top:2px;'>"
-                                    f"{n_turns} messages &nbsp;·&nbsp; {age_str}</div>"
-                                    f"</div>",
+                                    f"<div style='background:#f8fafc;border:1px solid #e2e8f0;"
+                                    f"border-left:3px solid #3b82f6;"
+                                    f"border-radius:8px;padding:10px 14px;margin-bottom:6px;'>"
+                                    f"<div style='font-size:10px;font-weight:600;color:#64748b;"
+                                    f"text-transform:uppercase;letter-spacing:0.5px;"
+                                    f"margin-bottom:4px;'>{_date_lbl}</div>"
+                                    f"<div style='font-size:13px;font-weight:600;color:#0f172a;"
+                                    f"line-height:1.4;margin-bottom:5px;'>{html.escape(_preview_q)}</div>"
+                                    f"<div style='font-size:11px;color:#94a3b8;'>"
+                                    f"{_rel} &nbsp;·&nbsp; {_n_q} question{'s' if _n_q != 1 else ''}"
+                                    f"</div></div>",
                                     unsafe_allow_html=True,
                                 )
-                            with sr:
-                                if is_current:
+                            with _ac:
+                                if st.button(
+                                    "View",
+                                    key=f"btn_view_day_{_dstr}",
+                                    use_container_width=True,
+                                    type="primary",
+                                ):
+                                    st.session_state["_chats_selected_date"] = _dstr
+                                    st.rerun()
+
+                    # ── DAY DETAIL VIEW ───────────────────────────────────────
+                    else:
+                        _detail_rows = sorted(
+                            by_date.get(sel_date, []),
+                            key=lambda r: r["created_at"],   # oldest first
+                        )
+
+                        if not _detail_rows:
+                            st.info("No records found for this date.")
+                        else:
+                            for _qi, _row in enumerate(_detail_rows):
+                                _q    = _row.get("question", "").strip()
+                                _desc = _row.get("descriptive", "").strip()
+                                _pres = _row.get("prescriptive", "").strip()
+                                _pred = _row.get("predictive", "").strip()
+                                _summ = _row.get("summary", "").strip()
+                                _rel  = _rel_time(_row["created_at"])
+
+                                # Card header: question preview + relative time
+                                _q_preview = (_q[:75] + "…") if len(_q) > 75 else _q
+                                st.markdown(
+                                    f"<div style='background:#f1f5f9;border-left:3px solid #3b82f6;"
+                                    f"border-radius:6px;padding:8px 12px;margin-bottom:4px;"
+                                    f"margin-top:{12 if _qi > 0 else 0}px;'>"
+                                    f"<div style='font-size:13px;font-weight:700;color:#0f172a;"
+                                    f"line-height:1.4;'>{html.escape(_q_preview)}</div>"
+                                    f"<div style='font-size:11px;color:#94a3b8;margin-top:3px;'>"
+                                    f"{_rel}</div></div>",
+                                    unsafe_allow_html=True,
+                                )
+
+                                with st.expander("View analysis", expanded=(_qi == 0)):
+                                    # Full question
                                     st.markdown(
-                                        "<div style='padding:10px 0;text-align:center;font-size:12px;"
-                                        "color:#64748b;'>Current</div>",
+                                        f"<div style='font-size:13px;font-weight:700;"
+                                        f"color:#1e40af;margin-bottom:10px;'>❓ {html.escape(_q)}</div>",
                                         unsafe_allow_html=True,
                                     )
-                                else:
-                                    if st.button(
-                                        "▶ Resume",
-                                        key=f"btn_panel_resume_{s_idx}",
-                                        use_container_width=True,
-                                        type="primary",
-                                    ):
-                                        with st.spinner("Loading conversation..."):
-                                            msgs = cp_tmp.load_session_messages(sess["session_id"]) if cp_tmp else []
-                                        st.session_state.genie_messages      = msgs
-                                        st.session_state.chat_turn_index     = len(msgs)
-                                        st.session_state.genie_session_id    = sess["session_id"]
-                                        st.session_state.genie_session_label = sess["session_label"]
-                                        st.session_state.restore_dismissed   = True
-                                        st.session_state["show_chats_panel"] = False
-                                        st.rerun()
 
-                    st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
-                    if st.button("Close", key="btn_panel_close",
-                                 use_container_width=True, type="secondary"):
-                        st.session_state["show_chats_panel"] = False
-                        st.rerun()
+                                    if _desc:
+                                        st.markdown(
+                                            "<div style='font-size:12px;font-weight:700;"
+                                            "color:#0f172a;margin-bottom:4px;'>📊 Descriptive Analysis</div>",
+                                            unsafe_allow_html=True,
+                                        )
+                                        st.markdown(
+                                            f"<div style='font-size:13px;color:#374151;"
+                                            f"line-height:1.6;margin-bottom:10px;'>{_desc}</div>",
+                                            unsafe_allow_html=True,
+                                        )
+
+                                    if _pres:
+                                        st.markdown(
+                                            "<div style='font-size:12px;font-weight:700;"
+                                            "color:#0f172a;margin-bottom:4px;'>🎯 Prescriptive Analysis</div>",
+                                            unsafe_allow_html=True,
+                                        )
+                                        st.markdown(
+                                            f"<div style='font-size:13px;color:#374151;"
+                                            f"line-height:1.6;margin-bottom:10px;'>{_pres}</div>",
+                                            unsafe_allow_html=True,
+                                        )
+
+                                    if _pred:
+                                        st.markdown(
+                                            "<div style='font-size:12px;font-weight:700;"
+                                            "color:#0f172a;margin-bottom:4px;'>🔮 Predictive Analysis</div>",
+                                            unsafe_allow_html=True,
+                                        )
+                                        st.markdown(
+                                            f"<div style='font-size:13px;color:#374151;"
+                                            f"line-height:1.6;margin-bottom:10px;'>{_pred}</div>",
+                                            unsafe_allow_html=True,
+                                        )
+
+                                    if not (_desc or _pres or _pred) and _summ:
+                                        st.markdown(_summ)
+
+                                    if not (_desc or _pres or _pred or _summ):
+                                        st.caption("No analysis details stored for this question.")
+
+                        # Export this day's chats as MD
+                        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+                        try:
+                            _exp_dlbl = pd.Timestamp(sel_date).strftime("%B %d, %Y")
+                        except Exception:
+                            _exp_dlbl = sel_date
+                        _day_md_lines = [
+                            f"# Chat History — {_exp_dlbl}", "",
+                            f"*Exported {datetime.now().strftime('%Y-%m-%d %H:%M')}*",
+                            "", "---", "",
+                        ]
+                        for _qi2, _r2 in enumerate(_detail_rows):
+                            _day_md_lines += [f"## Q{_qi2+1}: {_r2.get('question','')}", ""]
+                            if _r2.get("descriptive"):
+                                _day_md_lines += ["### Descriptive Analysis", _r2["descriptive"], ""]
+                            if _r2.get("prescriptive"):
+                                _day_md_lines += ["### Prescriptive Analysis", _r2["prescriptive"], ""]
+                            if _r2.get("predictive"):
+                                _day_md_lines += ["### Predictive Analysis", _r2["predictive"], ""]
+                            _day_md_lines += ["---", ""]
+                        st.download_button(
+                            label=f"⬇ Export {_exp_dlbl} as MD",
+                            data="\n".join(_day_md_lines),
+                            file_name=f"chat_{sel_date}.md",
+                            mime="text/markdown",
+                            use_container_width=True,
+                            key="btn_export_day_md",
+                        )
+
 
             # ── Handle summarize ──────────────────────────────────────────────────
             if summarize_clicked:
@@ -9868,9 +10696,27 @@ Respond with THREE sections (ONLY these headers, no extra text):
                                 use_container_width=True,
                                 type="primary",
                             ):
-                                # Load messages for this specific session
-                                with st.spinner("Loading conversation..."):
+                                with st.spinner("Loading conversation & building context..."):
                                     msgs = cp.load_session_messages(sess["session_id"])
+                                    # ── Generate Azure OpenAI context from old chat ──────
+                                    _resume_context = ""
+                                    if msgs:
+                                        _transcript = "\n".join([
+                                            f"{'User' if m['role'] == 'user' else 'AI'}: {m.get('content', '')}"
+                                            for m in msgs if m.get("content")
+                                        ])
+                                        _resume_context = _azure_openai_generate_context(
+                                            _transcript, content_type="chat"
+                                        )
+                                    if _resume_context:
+                                        msgs = [{
+                                            "role":      "assistant",
+                                            "content":   f"📋 **Resumed session context (AI-generated):**\n\n{_resume_context}",
+                                            "timestamp": pd.Timestamp.now(),
+                                            "response":  None,
+                                            "_is_context_msg": True,
+                                        }] + msgs
+                                        st.session_state["_resume_context_text"] = _resume_context
                                 st.session_state.genie_messages      = msgs
                                 st.session_state.chat_turn_index     = len(msgs)
                                 st.session_state.genie_session_id    = sess["session_id"]
@@ -9960,11 +10806,76 @@ Respond with THREE sections (ONLY these headers, no extra text):
             </script>
             """, unsafe_allow_html=True)
 
-            st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+            st.markdown("&nbsp;", unsafe_allow_html=True)
 
-            # ── Chat input ────────────────────────────────────────────────────────
+            # ── File-context banner (shown when a file has been attached) ─────────
+            _file_ctx_active = bool(st.session_state.get("_uploaded_file_context", ""))
+            if _file_ctx_active:
+                _fname = st.session_state.get("_uploaded_file_name", "file")
+                _fc1, _fc2 = st.columns([5, 1], gap="small")
+                with _fc1:
+                    st.markdown(
+                        f"<div style='background:#eff6ff;border:1px solid #bfdbfe;"
+                        f"border-radius:8px;padding:7px 12px;font-size:12px;"
+                        f"color:#1e40af;'>"
+                        f"📎 <b>{html.escape(_fname)}</b> attached — AI context active</div>",
+                        unsafe_allow_html=True,
+                    )
+                with _fc2:
+                    if st.button("✕ Remove", key="btn_remove_file",
+                                 use_container_width=True):
+                        st.session_state.pop("_uploaded_file_context", None)
+                        st.session_state.pop("_uploaded_file_name",    None)
+                        st.rerun()
+
+            # ── Upload popover (outside form so st.button inside fires correctly) ──
+            _pop_col, _spacer = st.columns([0.06, 0.94])
+            with _pop_col:
+                with st.popover("\uff0b", use_container_width=True):
+                    st.markdown(
+                        "<div style='font-size:13px;font-weight:700;color:#0f172a;"
+                        "margin-bottom:8px;'>\U0001f4ce Attach a file</div>",
+                        unsafe_allow_html=True,
+                    )
+                    st.markdown(
+                        "<div style='font-size:11px;color:#64748b;margin-bottom:10px;'>"
+                        "Supported: .txt, .md, .csv, .json, .pdf, .docx, .xlsx</div>",
+                        unsafe_allow_html=True,
+                    )
+                    _up_file = st.file_uploader(
+                        "Choose file",
+                        type=["txt", "md", "csv", "json", "pdf", "docx", "xlsx", "xls", "log"],
+                        key=f"genie_file_uploader_{st.session_state.genie_input_version}",
+                        label_visibility="collapsed",
+                    )
+                    if _up_file is not None:
+                        if st.button("Generate Context from File", key="btn_gen_ctx",
+                                     type="primary", use_container_width=True):
+                            with st.spinner("Extracting & summarising with Azure OpenAI\u2026"):
+                                _raw_text     = _extract_text_from_uploaded_file(_up_file)
+                                _file_ctx_str = _azure_openai_generate_context(
+                                    _raw_text, content_type="file"
+                                )
+                            if _file_ctx_str:
+                                st.session_state["_uploaded_file_context"] = _file_ctx_str
+                                st.session_state["_uploaded_file_name"]    = _up_file.name
+                                _ctx_chat_msg = {
+                                    "role":      "assistant",
+                                    "content":   f"\U0001f4ce **Context loaded from `{_up_file.name}`:**\n\n{_file_ctx_str}",
+                                    "timestamp": pd.Timestamp.now(),
+                                    "response":  None,
+                                    "_is_context_msg": True,
+                                }
+                                if "genie_messages" not in st.session_state:
+                                    st.session_state.genie_messages = []
+                                st.session_state.genie_messages.append(_ctx_chat_msg)
+                            else:
+                                st.error("Could not extract context. Check Azure OpenAI config.")
+                            st.rerun()
+
+            # ── Chat input row (text input | Send button) ─────────────────────────
             with st.form("genie_question_form", clear_on_submit=True):
-                inp_col, btn_col = st.columns([0.88, 0.12])
+                inp_col, btn_col = st.columns([0.82, 0.18])
                 with inp_col:
                     user_query = st.text_input(
                         "Ask",
@@ -9973,7 +10884,7 @@ Respond with THREE sections (ONLY these headers, no extra text):
                         key=f"genie_chat_input_{st.session_state.genie_input_version}",
                     )
                 with btn_col:
-                    send_clicked = st.form_submit_button("Send →")
+                    send_clicked = st.form_submit_button("Send \u2192", use_container_width=True)
 
             if send_clicked and user_query:
                 st.session_state.selected_analysis   = "custom"
