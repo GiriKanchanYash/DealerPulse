@@ -15131,14 +15131,14 @@ def render_revenue_recovery_agent(session):
                 current_p AS (
                     SELECT DEALER_NAME,
                            SUM(REVENUE) AS CURR_REV,
-                           COUNT(DISTINCT PERIOD_YEAR || PERIOD_MONTH) AS CURR_PERIODS
+                           COUNT(DISTINCT CAST(PERIOD_YEAR AS VARCHAR(10)) + CAST(PERIOD_MONTH AS VARCHAR(10))) AS CURR_PERIODS
                     FROM split WHERE period_bucket = 'current'
                     GROUP BY DEALER_NAME
                 ),
                 prior_p AS (
                     SELECT DEALER_NAME,
                            SUM(REVENUE) AS PREV_REV,
-                           COUNT(DISTINCT PERIOD_YEAR || PERIOD_MONTH) AS PREV_PERIODS
+                           COUNT(DISTINCT CAST(PERIOD_YEAR AS VARCHAR(10)) + CAST(PERIOD_MONTH AS VARCHAR(10))) AS PREV_PERIODS
                     FROM split WHERE period_bucket = 'prior'
                     GROUP BY DEALER_NAME
                 )
