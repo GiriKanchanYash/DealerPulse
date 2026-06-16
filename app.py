@@ -4230,6 +4230,17 @@ def fetch_dealers(_session):
         pass  # silently handle — no user-facing warning
         return []
 
+def _period_month_range_clause(from_date, to_date):
+    """SQL Server-safe month filter when PERIOD_MONTH is a DATE column."""
+    if not from_date or not to_date:
+        return ""
+    from_date_str = from_date.strftime('%Y-%m-%d') if hasattr(from_date, 'strftime') else str(from_date)
+    to_date_str = to_date.strftime('%Y-%m-%d') if hasattr(to_date, 'strftime') else str(to_date)
+    return (
+        f" AND PERIOD_MONTH >= DATETRUNC(MONTH, CAST('{from_date_str}' AS DATE))"
+        f" AND PERIOD_MONTH <= DATETRUNC(MONTH, CAST('{to_date_str}' AS DATE))"
+    )
+
 @st.cache_data(ttl=3600)
 def fetch_cash_conversion_cycle(_session, filters=None):
     """Fetch Cash Conversion Cycle (CCC) - use pre-calculated CCC column from view"""
@@ -4242,10 +4253,9 @@ def fetch_cash_conversion_cycle(_session, filters=None):
         """
         if filters and 'dealer' in filters and filters['dealer'] != 'All Dealers':
             query += f" AND DEALER_NAME = '{filters['dealer']}'"
-            if filters and 'from_date' in filters and 'to_date' in filters:
-                from_month = filters['from_date'].strftime('%Y-%m')
-                to_month = filters['to_date'].strftime('%Y-%m')
-                query += f" AND PERIOD_MONTH BETWEEN '{from_month}' AND '{to_month}'"
+        if filters and 'from_date' in filters and 'to_date' in filters:
+                query += _period_month_range_clause(filters['from_date'], filters['to_date'])
+ 
         result = run_df(query).to_pandas()
         if result.empty:
             return 30.0  # Default CCC
@@ -4296,9 +4306,7 @@ def fetch_revenue_growth(_session, filters=None):
         if filters and 'dealer' in filters and filters['dealer'] != 'All Dealers':
             query += f" AND DEALER_NAME = '{filters['dealer']}'"
             if filters and 'from_date' in filters and 'to_date' in filters:
-                from_month = filters['from_date'].strftime('%Y-%m')
-                to_month = filters['to_date'].strftime('%Y-%m')
-                query += f" AND PERIOD_MONTH BETWEEN '{from_month}' AND '{to_month}'"
+                query += _period_month_range_clause(filters['from_date'], filters['to_date'])
         result = run_df(query).to_pandas()
         result.columns = result.columns.str.lower()
         val = float(result.iloc[0]['revenue_growth_pct']) if not result.empty and result.iloc[0]['revenue_growth_pct'] is not None else None
@@ -4319,9 +4327,7 @@ def fetch_gross_profit_margin(_session, filters=None):
         if filters and 'dealer' in filters and filters['dealer'] != 'All Dealers':
             query += f" AND DEALER_NAME = '{filters['dealer']}'"
             if filters and 'from_date' in filters and 'to_date' in filters:
-                from_month = filters['from_date'].strftime('%Y-%m')
-                to_month = filters['to_date'].strftime('%Y-%m')
-                query += f" AND PERIOD_MONTH BETWEEN '{from_month}' AND '{to_month}'"
+                query += _period_month_range_clause(filters['from_date'], filters['to_date'])
         result = run_df(query).to_pandas()
         result.columns = result.columns.str.lower()
         val = float(result.iloc[0]['gross_profit_margin_pct']) if not result.empty and result.iloc[0]['gross_profit_margin_pct'] is not None else None
