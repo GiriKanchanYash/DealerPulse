@@ -6265,6 +6265,7 @@ def render_attention_and_priority(session, filters):
                     "font-size:14px;padding:10px;'>← Prev</div>",
                     unsafe_allow_html=True
                 )
+
         with pag_cols[1]:
             st.markdown(
                 f"<div style='text-align:center;font-weight:500;color:#6b7280;"
@@ -6272,6 +6273,7 @@ def render_attention_and_priority(session, filters):
                 f"{st.session_state.attention_page + 1} of {total_pages}</div>",
                 unsafe_allow_html=True
             )
+
         with pag_cols[2]:
             if st.session_state.attention_page < total_pages - 1:
                 if st.button("Next →", key="na_next_bottom"):
