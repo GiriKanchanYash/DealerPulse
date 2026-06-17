@@ -6118,33 +6118,28 @@ def render_attention_and_priority(session, filters):
                 st.rerun()
 
         st.markdown(f"""
-        <style>
-        {"div[data-testid='stButton'] button[data-testid='baseButton-na_btn_critical'] { background: #fef2f2 !important; color: #dc2626 !important; border-color: #fecaca !important; font-weight: 800 !important; }" if current_tab == 'Critical' else ""}
-        {"div[data-testid='stButton'] button[data-testid='baseButton-na_btn_average']  { background: #fffbeb !important; color: #f59e0b !important; border-color: #fde68a !important; font-weight: 800 !important; }" if current_tab == 'Average'  else ""}
-        {"div[data-testid='stButton'] button[data-testid='baseButton-na_btn_good']     { background: #f0fdf4 !important; color: #16a34a !important; border-color: #bbf7d0 !important; font-weight: 800 !important; }" if current_tab == 'Good'     else ""}
-        button[data-testid^="baseButton-dealer_pill_"] {{
-            background: transparent !important;
-            border: none !important;
-            box-shadow: none !important;
-            color: #1a1a1a !important;
-            font-weight: 900 !important;
-            font-size: 13px !important;
-            padding: 0 !important;
-            margin: 0 !important;
-            cursor: pointer !important;
-            text-align: left !important;
-            text-decoration: underline !important;
-        }}
-        button[data-testid^="baseButton-dealer_pill_"] p {{
-            font-weight: 900 !important;
-            font-size: 13px !important;
-        }}
-        button[data-testid^="baseButton-dealer_pill_"]:hover {{
-            color: #2563eb !important;
-            text-decoration: underline !important;
-        }}
-        </style>
-        """, unsafe_allow_html=True)
+                <style>
+
+                /* Base tab button style */
+                [class*="st-key-na_btn_"] button {{
+                    border-radius: 999px !important;
+                    padding: 10px 0 !important;
+                    font-weight: 600 !important;
+                    background: #e5e7eb !important;
+                    color: #374151 !important;
+                    border: none !important;
+                    width: 100% !important;
+                }}
+
+                /* Active states */
+                {"[class*='st-key-na_btn_critical'] button { background:#2563eb !important; color:white !important; font-weight:800 !important; }" if current_tab=='Critical' else ""}
+
+                {"[class*='st-key-na_btn_average'] button { background:#2563eb !important; color:white !important; font-weight:800 !important; }" if current_tab=='Average' else ""}
+
+                {"[class*='st-key-na_btn_good'] button { background:#2563eb !important; color:white !important; font-weight:800 !important; }" if current_tab=='Good' else ""}
+
+                </style>
+                """, unsafe_allow_html=True)
 
         st.markdown("<div style='height:18px;'></div>", unsafe_allow_html=True)
 
