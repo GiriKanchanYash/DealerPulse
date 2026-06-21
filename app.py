@@ -5133,7 +5133,7 @@ def render_filters(session):
 
    
     if 'time_period' not in st.session_state:
-        st.session_state['time_period'] = get_config_value("filters.default_time_period", "Last 30 Days")
+        st.session_state['time_period'] = get_config_value("filters.default_time_period", "YTD")
 
     def compute_date_range_for_period(period):
         today = datetime.now().date()
@@ -5152,7 +5152,7 @@ def render_filters(session):
         time_period = st.radio(
             label="Time Period",
             options=['Last 30 Days', 'QTD', 'YTD'],
-            index=['Last 30 Days', 'QTD', 'YTD'].index(st.session_state.get('time_period', 'Last 30 Days')),
+            index=['Last 30 Days', 'QTD', 'YTD'].index(st.session_state.get('time_period', 'YTD')),
             key='time_period_radio',
             horizontal=True,
             label_visibility='collapsed'
@@ -5166,7 +5166,7 @@ def render_filters(session):
 
     with cols[0]:
         # Always recompute date range based on current time period
-        current_time_period = st.session_state.get('time_period', 'Last 30 Days')
+        current_time_period = st.session_state.get('time_period', 'YTD')
         initial_date_range = compute_date_range_for_period(current_time_period)
         
         # Create dynamic key based on time period to force recompute
@@ -5210,7 +5210,7 @@ def render_filters(session):
         "dealer": dealer,
         "product": product,
         "metric": "Revenue",
-        "time_period": st.session_state.get('time_period', 'Last 30 Days'),
+        "time_period": st.session_state.get('time_period', 'YTD'),
     }
 
 # ============================================================================
