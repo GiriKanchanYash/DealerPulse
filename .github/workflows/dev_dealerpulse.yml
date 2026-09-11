@@ -63,4 +63,4 @@ jobs:
         with:
           app-name: 'DealerPulse'
           slot-name: 'Production'
-          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_AC70C641B24E4C0692355DA9F5A114C9 }}
+          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_49D85EB0F00640C090039C50C9FB8E37 }}
